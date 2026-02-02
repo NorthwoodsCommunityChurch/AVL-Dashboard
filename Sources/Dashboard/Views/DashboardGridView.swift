@@ -24,6 +24,10 @@ struct DashboardGridView: View {
                         ForEach(viewModel.sortedMachines) { machine in
                             FlipCardView(
                                 machine: machine,
+                                needsUpdate: viewModel.machineNeedsUpdate(machine),
+                                onUpdate: {
+                                    Task { await viewModel.pushUpdate(to: machine) }
+                                },
                                 onDelete: { viewModel.deleteMachine(id: machine.hardwareUUID) },
                                 onSave: { viewModel.saveMachine(machine) }
                             )
@@ -37,6 +41,37 @@ struct DashboardGridView: View {
             .frame(maxHeight: .infinity, alignment: .top)
         }
         .toolbar {
+            ToolbarItem(placement: .automatic) {
+                if viewModel.dashboardUpdateAvailable {
+                    Button {
+                        Task { await viewModel.updateDashboard() }
+                    } label: {
+                        if viewModel.isDownloadingDashboardUpdate {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label("Install v\(viewModel.latestVersionString ?? "new")", systemImage: "arrow.down.circle.fill")
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    .disabled(viewModel.isDownloadingDashboardUpdate)
+                    .help("Download and install the latest version")
+                } else {
+                    Button {
+                        Task { await viewModel.forceCheckForUpdates() }
+                    } label: {
+                        if viewModel.isCheckingForUpdates {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label("Check for Updates", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                    }
+                    .disabled(viewModel.isCheckingForUpdates)
+                    .help("Check GitHub for a newer version")
+                }
+            }
+
             ToolbarItem(placement: .automatic) {
                 Button {
                     showingAddSheet = true

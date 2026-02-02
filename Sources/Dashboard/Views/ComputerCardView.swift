@@ -4,6 +4,7 @@ import Shared
 /// Front face of a computer card showing live metrics.
 struct ComputerCardView: View {
     let machine: MachineViewModel
+    var needsUpdate: Bool = false
     @Environment(\.openURL) private var openURL
 
     private var cpuColor: Color {
@@ -112,7 +113,7 @@ struct ComputerCardView: View {
                             .font(.system(size: 9))
                         Text(machine.fileVaultEnabled ? "FileVault" : "No FV")
                     }
-                    .foregroundStyle(machine.fileVaultEnabled ? .green : .orange)
+                    .foregroundStyle(machine.fileVaultEnabled ? .orange : .green)
                 }
 
                 if let mac = machine.networkInfo?.macAddress {
@@ -136,6 +137,15 @@ struct ComputerCardView: View {
                 .stroke(Color.primary.opacity(0.12), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.15), radius: 3, y: 1)
+        .overlay(alignment: .topTrailing) {
+            if needsUpdate {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.orange)
+                    .background(Circle().fill(.thickMaterial).padding(1))
+                    .offset(x: 4, y: -4)
+            }
+        }
     }
 
     private func metricTile<Content: View>(@ViewBuilder content: () -> Content) -> some View {

@@ -10,6 +10,17 @@ final class DashboardViewModel {
         didSet { persist() }
     }
 
+    /// Whether the Dashboard app itself has an update available.
+    var dashboardUpdateAvailable: Bool = false
+    /// Whether we're currently checking GitHub for updates.
+    var isCheckingForUpdates: Bool = false
+    /// The latest version string from GitHub (for display).
+    var latestVersionString: String?
+    /// Whether we're currently downloading and applying a dashboard self-update.
+    var isDownloadingDashboardUpdate: Bool = false
+    /// Error message if dashboard self-update failed.
+    var dashboardUpdateError: String?
+
     var sortedMachines: [MachineViewModel] {
         switch sortOrder {
         case .name:
@@ -24,6 +35,7 @@ final class DashboardViewModel {
     private let discovery = DiscoveryService()
     private let polling = PollingService()
     private let persistence = PersistenceService()
+    let updateService = UpdateService()
 
     /// Map of Bonjour service names to their endpoints for active polling.
     private var activeEndpoints: [String: NWEndpoint] = [:]
@@ -37,11 +49,14 @@ final class DashboardViewModel {
     /// Map of manual endpoint strings to known hardwareUUID.
     private var manualEndpointToUUID: [String: String] = [:]
 
+    private var updateCheckTask: Task<Void, Never>?
+
     init() {
         loadPersistedData()
         setupDiscovery()
         discovery.startBrowsing()
         startManualEndpointPolling()
+        startUpdateChecking()
     }
 
     // MARK: - Persistence
@@ -239,5 +254,113 @@ final class DashboardViewModel {
         }
         guard !host.isEmpty else { return nil }
         return (host, port)
+    }
+
+    // MARK: - Update Checking
+
+    private func startUpdateChecking() {
+        updateCheckTask = Task { [weak self] in
+            // Check on launch
+            await self?.checkForUpdates()
+
+            // Then every 15 minutes
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(900))
+                await self?.checkForUpdates()
+            }
+        }
+    }
+
+    func checkForUpdates() async {
+        await MainActor.run { self.isCheckingForUpdates = true }
+
+        await updateService.checkForUpdate()
+
+        await MainActor.run {
+            self.isCheckingForUpdates = false
+            self.dashboardUpdateAvailable = self.updateService.updateAvailable
+            self.latestVersionString = self.updateService.latestVersion?.description
+        }
+    }
+
+    /// Manual check triggered by toolbar button — bypasses cache.
+    func forceCheckForUpdates() async {
+        await MainActor.run { self.isCheckingForUpdates = true }
+
+        await updateService.forceCheck()
+
+        await MainActor.run {
+            self.isCheckingForUpdates = false
+            self.dashboardUpdateAvailable = self.updateService.updateAvailable
+            self.latestVersionString = self.updateService.latestVersion?.description
+        }
+    }
+
+    /// Download and apply a self-update to the Dashboard app.
+    func updateDashboard() async {
+        await MainActor.run {
+            self.isDownloadingDashboardUpdate = true
+            self.dashboardUpdateError = nil
+        }
+
+        do {
+            let zipData = try await updateService.downloadDashboardUpdate()
+            try DashboardUpdateManager.shared.applyUpdate(zipData: zipData)
+            // If we reach here, the app is about to terminate and relaunch
+        } catch {
+            await MainActor.run {
+                self.isDownloadingDashboardUpdate = false
+                self.dashboardUpdateError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Whether a specific machine's agent needs updating.
+    /// Only returns true when the dashboard itself is up to date.
+    func machineNeedsUpdate(_ machine: MachineViewModel) -> Bool {
+        guard !dashboardUpdateAvailable else { return false }
+        return updateService.agentNeedsUpdate(version: machine.agentVersion)
+    }
+
+    /// Push an update to a specific agent. Uses the machine's known endpoint.
+    func pushUpdate(to machine: MachineViewModel) async {
+        guard let endpoint = resolveEndpoint(for: machine) else { return }
+
+        await MainActor.run { machine.isUpdating = true; machine.updateError = nil }
+
+        do {
+            try await updateService.pushUpdateToAgent(endpoint: endpoint)
+            await MainActor.run { machine.isUpdating = false }
+        } catch {
+            await MainActor.run {
+                machine.isUpdating = false
+                machine.updateError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Resolve an NWEndpoint for a machine (prefers manual endpoint, then Bonjour).
+    private func resolveEndpoint(for machine: MachineViewModel) -> NWEndpoint? {
+        if let manual = machine.manualEndpoint, let (host, port) = parseEndpoint(manual) {
+            return NWEndpoint.hostPort(
+                host: NWEndpoint.Host(host),
+                port: NWEndpoint.Port(rawValue: port) ?? NWEndpoint.Port(rawValue: BonjourConstants.defaultPort)!
+            )
+        }
+
+        // Try Bonjour endpoint
+        if let serviceName = serviceToUUID.first(where: { $0.value == machine.hardwareUUID })?.key {
+            return activeEndpoints[serviceName]
+        }
+
+        // Last resort: use networkInfo IP
+        if let ip = machine.networkInfo?.ipAddress {
+            return NWEndpoint.hostPort(
+                host: NWEndpoint.Host(ip),
+                port: NWEndpoint.Port(rawValue: BonjourConstants.defaultPort)!
+            )
+        }
+
+        return nil
     }
 }

@@ -29,7 +29,8 @@ final class SystemMetrics {
             osVersion: osVersion(),
             chipType: cachedChipType,
             network: networkInfo(),
-            fileVaultEnabled: cachedFileVault
+            fileVaultEnabled: cachedFileVault,
+            agentVersion: AppVersion.current
         )
     }
 

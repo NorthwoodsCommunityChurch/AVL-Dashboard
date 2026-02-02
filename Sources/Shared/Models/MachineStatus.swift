@@ -12,6 +12,7 @@ public struct MachineStatus: Codable, Sendable {
     public let chipType: String
     public let network: NetworkInfo?
     public let fileVaultEnabled: Bool
+    public let agentVersion: String?
 
     public init(
         hardwareUUID: String,
@@ -23,7 +24,8 @@ public struct MachineStatus: Codable, Sendable {
         osVersion: String,
         chipType: String,
         network: NetworkInfo?,
-        fileVaultEnabled: Bool
+        fileVaultEnabled: Bool,
+        agentVersion: String? = nil
     ) {
         self.hardwareUUID = hardwareUUID
         self.hostname = hostname
@@ -35,6 +37,7 @@ public struct MachineStatus: Codable, Sendable {
         self.chipType = chipType
         self.network = network
         self.fileVaultEnabled = fileVaultEnabled
+        self.agentVersion = agentVersion
     }
 }
 

@@ -14,6 +14,7 @@ final class MetricsServer: ObservableObject {
     private let queue = DispatchQueue(label: "com.computerdash.agent.server")
     private var lastPollTime: Date?
     private var connectionTimer: Timer?
+    private var isUpdating = false
 
     init() {
         startServer()
@@ -110,10 +111,13 @@ final class MetricsServer: ObservableObject {
                 return
             }
 
-            let requestString = String(data: data, encoding: .utf8) ?? ""
+            let method = HTTPUtils.parseMethod(from: data)
+            let path = HTTPUtils.parsePath(from: data)
 
-            if requestString.hasPrefix("GET \(BonjourConstants.statusPath)") {
+            if method == "GET" && path == BonjourConstants.statusPath {
                 self.handleStatusRequest(connection: connection)
+            } else if method == "POST" && path == BonjourConstants.updatePath {
+                self.handleUpdateRequest(connection: connection, initialData: data)
             } else {
                 let response = HTTPUtils.notFoundResponse()
                 connection.send(
@@ -147,6 +151,96 @@ final class MetricsServer: ObservableObject {
         DispatchQueue.main.async {
             self.lastPollTime = Date()
             self.dashboardConnected = true
+        }
+    }
+
+    // MARK: - Update Handling
+
+    private func handleUpdateRequest(connection: NWConnection, initialData: Data) {
+        guard !isUpdating else {
+            let response = HTTPUtils.errorResponse(status: 409, message: "Update already in progress")
+            connection.send(content: response, contentContext: .finalMessage, isComplete: true,
+                          completion: .contentProcessed { _ in connection.cancel() })
+            return
+        }
+
+        isUpdating = true
+
+        guard let contentLength = HTTPUtils.parseContentLength(from: initialData) else {
+            isUpdating = false
+            let response = HTTPUtils.errorResponse(status: 400, message: "Missing Content-Length")
+            connection.send(content: response, contentContext: .finalMessage, isComplete: true,
+                          completion: .contentProcessed { _ in connection.cancel() })
+            return
+        }
+
+        let maxSize = 50 * 1024 * 1024
+        guard contentLength <= maxSize else {
+            isUpdating = false
+            let response = HTTPUtils.errorResponse(status: 413, message: "Payload too large (50MB max)")
+            connection.send(content: response, contentContext: .finalMessage, isComplete: true,
+                          completion: .contentProcessed { _ in connection.cancel() })
+            return
+        }
+
+        // Extract any body bytes already received in the initial chunk
+        let initialBody: Data
+        if let body = HTTPUtils.extractBody(from: initialData) {
+            initialBody = body
+        } else {
+            initialBody = Data()
+        }
+
+        if initialBody.count >= contentLength {
+            // All data arrived in the first chunk
+            let zipData = initialBody.prefix(contentLength)
+            self.processUpdateData(Data(zipData), connection: connection)
+        } else {
+            // Need to accumulate more data
+            self.receiveUpdateBody(
+                connection: connection,
+                accumulated: initialBody,
+                expected: contentLength
+            )
+        }
+    }
+
+    private func receiveUpdateBody(connection: NWConnection, accumulated: Data, expected: Int) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+            guard let self else { return }
+            var buffer = accumulated
+            if let data { buffer.append(data) }
+
+            if buffer.count >= expected || isComplete {
+                let zipData = buffer.prefix(expected)
+                self.processUpdateData(Data(zipData), connection: connection)
+            } else if error != nil {
+                self.isUpdating = false
+                let response = HTTPUtils.errorResponse(status: 500, message: "Transfer failed")
+                connection.send(content: response, contentContext: .finalMessage, isComplete: true,
+                              completion: .contentProcessed { _ in connection.cancel() })
+            } else {
+                self.receiveUpdateBody(connection: connection, accumulated: buffer, expected: expected)
+            }
+        }
+    }
+
+    private func processUpdateData(_ zipData: Data, connection: NWConnection) {
+        do {
+            // Send 200 OK before starting the update (agent will terminate soon)
+            let response = HTTPUtils.okResponse(message: "Update accepted")
+            connection.send(content: response, contentContext: .finalMessage, isComplete: true,
+                          completion: .contentProcessed { [weak self] _ in
+                connection.cancel()
+                // Apply update on main queue after response is sent
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    do {
+                        try UpdateManager.shared.applyUpdate(zipData: zipData)
+                    } catch {
+                        self?.isUpdating = false
+                    }
+                }
+            })
         }
     }
 

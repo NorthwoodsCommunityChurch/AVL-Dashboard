@@ -4,6 +4,8 @@ import Shared
 /// Back face of a computer card with settings.
 struct ComputerCardBackView: View {
     @Bindable var machine: MachineViewModel
+    var needsUpdate: Bool = false
+    var onUpdate: (() -> Void)?
     let onDone: () -> Void
     let onDelete: () -> Void
 
@@ -47,6 +49,40 @@ struct ComputerCardBackView: View {
                         .textSelection(.enabled)
                     Spacer(minLength: 0)
                 }
+            }
+
+            // Agent version + update
+            HStack(spacing: 4) {
+                Image(systemName: "app.badge")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                Text("Agent v\(machine.agentVersion ?? "unknown")")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+
+                if needsUpdate {
+                    if machine.isUpdating {
+                        ProgressView()
+                            .controlSize(.mini)
+                    } else {
+                        Button {
+                            onUpdate?()
+                        } label: {
+                            Label("Update", systemImage: "arrow.down.circle")
+                                .font(.caption2)
+                        }
+                        .controlSize(.mini)
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+
+            if let error = machine.updateError {
+                Text(error)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
             }
 
             Spacer(minLength: 0)

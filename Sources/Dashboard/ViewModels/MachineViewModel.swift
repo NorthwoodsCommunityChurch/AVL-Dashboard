@@ -16,6 +16,9 @@ final class MachineViewModel: Identifiable {
     var uptimeSeconds: TimeInterval = 0
     var networkInfo: NetworkInfo?
     var fileVaultEnabled: Bool = false
+    var agentVersion: String?
+    var isUpdating: Bool = false
+    var updateError: String?
     var lastSeen: Date
 
     var manualEndpoint: String?
@@ -54,6 +57,7 @@ final class MachineViewModel: Identifiable {
         hostname = status.hostname
         networkInfo = status.network
         fileVaultEnabled = status.fileVaultEnabled
+        agentVersion = status.agentVersion
         isOnline = true
         consecutiveFailures = 0
         lastSeen = Date()
