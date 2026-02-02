@@ -1,0 +1,44 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Computer Dashboard}",
+            "name": "Debug Dashboard",
+            "target": "Dashboard",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Dashboard"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Computer Dashboard}",
+            "name": "Release Dashboard",
+            "target": "Dashboard",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Dashboard"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Computer Dashboard}",
+            "name": "Debug Agent",
+            "target": "Agent",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Agent"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Computer Dashboard}",
+            "name": "Release Agent",
+            "target": "Agent",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Agent"
+        }
+    ]
+}
