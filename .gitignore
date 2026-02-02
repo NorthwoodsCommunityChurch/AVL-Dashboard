@@ -22,6 +22,8 @@ Package.resolved
 build/
 *.app
 
-# Archives
+# Archives & release artifacts
 *.ipa
 *.xcarchive
+*.zip
+*.dmg
