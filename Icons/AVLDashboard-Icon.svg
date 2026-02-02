@@ -1,0 +1,51 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1F2937"/>
+      <stop offset="100%" style="stop-color:#111827"/>
+    </linearGradient>
+    <linearGradient id="pulse" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#22C55E" stop-opacity="0"/>
+      <stop offset="20%" style="stop-color:#4ADE80"/>
+      <stop offset="80%" style="stop-color:#4ADE80"/>
+      <stop offset="100%" style="stop-color:#22C55E" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="8" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="230" fill="url(#bg)"/>
+  
+  <!-- Outer ring track -->
+  <circle cx="512" cy="512" r="380" stroke="#2D3748" stroke-width="16" fill="none"/>
+  
+  <!-- Active ring -->
+  <circle cx="512" cy="512" r="380" stroke="#4ADE80" stroke-width="16" fill="none" 
+          stroke-dasharray="2388" stroke-dashoffset="597" stroke-linecap="round"
+          transform="rotate(-90 512 512)" filter="url(#glow)"/>
+  
+  <!-- Heartbeat pulse BEHIND text with fade edges -->
+  <path d="M92 540 
+           L260 540 
+           L330 540
+           L390 660
+           L480 300
+           L570 740
+           L650 460
+           L720 540
+           L932 540" 
+        stroke="url(#pulse)" stroke-width="20" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.5"/>
+  
+  <!-- AVL Text on top -->
+  <text x="512" y="580" fill="#fff" font-size="240" font-weight="700" text-anchor="middle" 
+        font-family="SF Pro Display, -apple-system, system-ui, BlinkMacSystemFont, sans-serif" letter-spacing="-8">AVL</text>
+  
+  <!-- Live indicator -->
+  <circle cx="512" cy="780" r="24" fill="#4ADE80" filter="url(#glow)"/>
+</svg>

@@ -28,6 +28,7 @@ mkdir -p "$DASH_CONTENTS/Resources"
 
 cp "$PRODUCTS_DIR/Dashboard" "$DASH_CONTENTS/MacOS/Dashboard"
 cp "$RESOURCES_DIR/Dashboard-Info.plist" "$DASH_CONTENTS/Info.plist"
+cp "$RESOURCES_DIR/AppIcon.icns" "$DASH_CONTENTS/Resources/AppIcon.icns"
 
 # Ad-hoc code sign
 codesign --force --deep --sign - "$DASH_APP"
@@ -42,6 +43,7 @@ mkdir -p "$AGENT_CONTENTS/Resources"
 
 cp "$PRODUCTS_DIR/Agent" "$AGENT_CONTENTS/MacOS/Agent"
 cp "$RESOURCES_DIR/Agent-Info.plist" "$AGENT_CONTENTS/Info.plist"
+cp "$RESOURCES_DIR/AppIcon.icns" "$AGENT_CONTENTS/Resources/AppIcon.icns"
 
 # Ad-hoc code sign
 codesign --force --deep --sign - "$AGENT_APP"
