@@ -57,7 +57,12 @@ public enum HTTPUtils {
 
     /// Parse Content-Length from raw HTTP request data.
     public static func parseContentLength(from data: Data) -> Int? {
-        guard let str = String(data: data, encoding: .utf8)?.prefix(4096) else { return nil }
+        // Only convert the header portion — the body may contain binary data that isn't valid UTF-8.
+        let separator = Data([0x0D, 0x0A, 0x0D, 0x0A]) // \r\n\r\n
+        let searchArea = data.prefix(4096)
+        guard let sepRange = searchArea.range(of: separator) else { return nil }
+        let headerData = data.prefix(upTo: sepRange.lowerBound)
+        guard let str = String(data: headerData, encoding: .utf8) else { return nil }
         for line in str.split(separator: "\r\n") {
             if line.lowercased().hasPrefix("content-length:") {
                 let value = line.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)
