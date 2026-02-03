@@ -4,13 +4,16 @@ import Shared
 /// Front face of a computer card showing live metrics.
 struct ComputerCardView: View {
     let machine: MachineViewModel
+    let settings: DashboardSettings
     var needsUpdate: Bool = false
     @Environment(\.openURL) private var openURL
+    @State private var copiedNetwork: String?
 
     private var cpuColor: Color {
-        if machine.cpuUsage >= 90 { return .red }
-        if machine.cpuUsage >= 60 { return .orange }
-        if machine.cpuUsage >= 30 { return .yellow }
+        let u = machine.cpuUsage
+        if u >= settings.cpuThresholds.critical { return .red }
+        if u >= settings.cpuThresholds.warning { return .orange }
+        if u >= settings.cpuThresholds.good { return .yellow }
         return .green
     }
 
@@ -25,9 +28,9 @@ struct ComputerCardView: View {
     private var tempColor: Color {
         let t = machine.cpuTemp
         guard t >= 0 else { return .gray }
-        if t >= machine.thresholds.critical { return .red }
-        if t >= machine.thresholds.warning { return .orange }
-        if t >= machine.thresholds.good { return .yellow }
+        if t >= settings.tempThresholds.critical { return .red }
+        if t >= settings.tempThresholds.warning { return .orange }
+        if t >= settings.tempThresholds.good { return .yellow }
         return .green
     }
 
@@ -78,7 +81,7 @@ struct ComputerCardView: View {
                     value: machine.cpuTemp,
                     maxValue: 120,
                     color: tempColor,
-                    label: machine.cpuTemp >= 0 ? "\(Int(machine.cpuTemp))°" : "--",
+                    label: machine.cpuTemp >= 0 ? "\(Int(machine.cpuTemp))\u{00B0}" : "--",
                     icon: "thermometer.medium",
                     isOnline: machine.isOnline
                 )
@@ -100,10 +103,23 @@ struct ComputerCardView: View {
             }
 
             ForEach(machine.networks, id: \.interfaceName) { network in
-                metricTile {
+                Button {
+                    let text = "\(network.ipAddress)  \(network.macAddress)"
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    copiedNetwork = network.interfaceName
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        if copiedNetwork == network.interfaceName {
+                            copiedNetwork = nil
+                        }
+                    }
+                } label: {
                     HStack(spacing: 3) {
-                        Image(systemName: network.interfaceType == "Wi-Fi" ? "wifi" : "cable.connector.horizontal")
+                        Image(systemName: copiedNetwork == network.interfaceName
+                              ? "checkmark.circle.fill"
+                              : (network.interfaceType == "Wi-Fi" ? "wifi" : "cable.connector.horizontal"))
                             .font(.system(size: 9))
+                            .foregroundStyle(copiedNetwork == network.interfaceName ? Color.green : Color.secondary)
                         Text("\(network.ipAddress) (\(network.interfaceType))")
                             .lineLimit(1)
                         Spacer(minLength: 0)
@@ -113,7 +129,15 @@ struct ComputerCardView: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.5)
                     }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.04))
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
                 }
+                .buttonStyle(.plain)
+                .help("Copy IP and MAC to clipboard")
             }
 
             metricTile {

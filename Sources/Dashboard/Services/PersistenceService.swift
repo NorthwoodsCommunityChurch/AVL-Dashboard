@@ -8,6 +8,7 @@ final class PersistenceService {
     struct StoredData: Codable {
         var sortOrder: MachineSortOrder
         var machines: [MachineIdentity]
+        var settings: DashboardSettings?
     }
 
     init() {
@@ -36,8 +37,8 @@ final class PersistenceService {
         try? jsonData.write(to: fileURL, options: .atomic)
     }
 
-    func saveMachines(_ machines: [MachineIdentity], sortOrder: MachineSortOrder) {
-        save(StoredData(sortOrder: sortOrder, machines: machines))
+    func saveMachines(_ machines: [MachineIdentity], sortOrder: MachineSortOrder, settings: DashboardSettings) {
+        save(StoredData(sortOrder: sortOrder, machines: machines, settings: settings))
     }
 }
 

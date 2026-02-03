@@ -14,9 +14,9 @@ public struct MachineThresholds: Codable, Sendable, Equatable {
     }
 
     /// Clamp values to a reasonable range.
-    public mutating func validate() {
-        good = min(max(good, 0), 150)
-        warning = min(max(warning, good), 150)
-        critical = min(max(critical, warning), 150)
+    public mutating func validate(maxValue: Double = 150) {
+        good = min(max(good, 0), maxValue)
+        warning = min(max(warning, good), maxValue)
+        critical = min(max(critical, warning), maxValue)
     }
 }

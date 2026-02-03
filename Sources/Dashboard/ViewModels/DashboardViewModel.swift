@@ -9,6 +9,9 @@ final class DashboardViewModel {
     var sortOrder: MachineSortOrder = .name {
         didSet { persist() }
     }
+    var settings: DashboardSettings = .defaults {
+        didSet { persist() }
+    }
 
     /// Whether the Dashboard app itself has an update available.
     var dashboardUpdateAvailable: Bool = false
@@ -64,12 +67,13 @@ final class DashboardViewModel {
     private func loadPersistedData() {
         let stored = persistence.load()
         sortOrder = stored.sortOrder
+        settings = stored.settings ?? .defaults
         machines = stored.machines.map { MachineViewModel(from: $0) }
     }
 
     func persist() {
         let identities = machines.map { $0.toIdentity() }
-        persistence.saveMachines(identities, sortOrder: sortOrder)
+        persistence.saveMachines(identities, sortOrder: sortOrder, settings: settings)
     }
 
     func saveMachine(_ machine: MachineViewModel) {

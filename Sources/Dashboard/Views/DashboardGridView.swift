@@ -4,6 +4,7 @@ import Shared
 struct DashboardGridView: View {
     @Bindable var viewModel: DashboardViewModel
     @State private var showingAddSheet = false
+    @State private var showingSettings = false
 
     private let columns = [
         GridItem(.adaptive(minimum: 150), spacing: 8)
@@ -24,6 +25,7 @@ struct DashboardGridView: View {
                         ForEach(viewModel.sortedMachines) { machine in
                             FlipCardView(
                                 machine: machine,
+                                settings: viewModel.settings,
                                 needsUpdate: viewModel.machineNeedsUpdate(machine),
                                 onUpdate: {
                                     Task { await viewModel.pushUpdate(to: machine) }
@@ -92,6 +94,18 @@ struct DashboardGridView: View {
                 }
                 .pickerStyle(.segmented)
                 .help("Sort machines")
+            }
+
+            ToolbarItem(placement: .automatic) {
+                Button {
+                    showingSettings.toggle()
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                }
+                .help("Dashboard settings")
+                .popover(isPresented: $showingSettings) {
+                    SettingsPopoverView(settings: $viewModel.settings)
+                }
             }
         }
         .sheet(isPresented: $showingAddSheet) {

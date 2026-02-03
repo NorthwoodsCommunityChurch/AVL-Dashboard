@@ -1,7 +1,9 @@
 import SwiftUI
+import ServiceManagement
 
 struct AgentMenuView: View {
     @ObservedObject var server: MetricsServer
+    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
         VStack {
@@ -20,6 +22,22 @@ struct AgentMenuView: View {
                 Label("Server Not Running", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.red)
             }
+
+            Divider()
+
+            Toggle("Launch at Login", isOn: $launchAtLogin)
+                .onChange(of: launchAtLogin) { _, newValue in
+                    do {
+                        if newValue {
+                            try SMAppService.mainApp.register()
+                        } else {
+                            try SMAppService.mainApp.unregister()
+                        }
+                    } catch {
+                        // Revert toggle if registration failed
+                        launchAtLogin = SMAppService.mainApp.status == .enabled
+                    }
+                }
 
             Divider()
 

@@ -23,20 +23,6 @@ struct ComputerCardBackView: View {
                     .font(.caption)
             }
 
-            // Temperature Thresholds — compact horizontal row
-            VStack(spacing: 3) {
-                Text("TEMP ALERTS (°C)")
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                HStack(spacing: 4) {
-                    thresholdPill(color: .green, label: "Good", value: $machine.thresholds.good)
-                    thresholdPill(color: .yellow, label: "Warn", value: $machine.thresholds.warning)
-                    thresholdPill(color: .red, label: "Crit", value: $machine.thresholds.critical)
-                }
-            }
-
             // Network interfaces (MAC addresses, selectable)
             ForEach(machine.networks, id: \.interfaceName) { network in
                 HStack(spacing: 4) {
@@ -90,7 +76,6 @@ struct ComputerCardBackView: View {
             // Action buttons
             HStack {
                 Button("Done") {
-                    machine.thresholds.validate()
                     onDone()
                 }
                 .buttonStyle(.borderedProminent)
@@ -120,23 +105,6 @@ struct ComputerCardBackView: View {
             Button("Delete", role: .destructive) { onDelete() }
         } message: {
             Text("Remove \(machine.displayName) from the dashboard? It will reappear if the agent is still running.")
-        }
-    }
-
-    /// Compact threshold field: colored dot + tiny number field.
-    private func thresholdPill(color: Color, label: String, value: Binding<Double>) -> some View {
-        HStack(spacing: 3) {
-            Circle()
-                .fill(color)
-                .frame(width: 6, height: 6)
-            TextField(
-                label,
-                value: value,
-                format: .number.precision(.fractionLength(0))
-            )
-            .textFieldStyle(.roundedBorder)
-            .font(.caption2)
-            .frame(minWidth: 30)
         }
     }
 }

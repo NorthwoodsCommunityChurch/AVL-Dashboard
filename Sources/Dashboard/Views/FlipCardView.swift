@@ -4,6 +4,7 @@ import Shared
 /// Container that manages a 3D flip between front and back card faces.
 struct FlipCardView: View {
     @Bindable var machine: MachineViewModel
+    let settings: DashboardSettings
     var needsUpdate: Bool = false
     var onUpdate: (() -> Void)?
     let onDelete: () -> Void
@@ -12,7 +13,7 @@ struct FlipCardView: View {
     var body: some View {
         ZStack {
             // Front face
-            ComputerCardView(machine: machine, needsUpdate: needsUpdate)
+            ComputerCardView(machine: machine, settings: settings, needsUpdate: needsUpdate)
                 .opacity(machine.isFlipped ? 0 : 1)
                 .rotation3DEffect(
                     .degrees(machine.isFlipped ? 180 : 0),
