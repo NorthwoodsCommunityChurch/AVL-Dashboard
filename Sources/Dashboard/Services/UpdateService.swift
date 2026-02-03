@@ -197,7 +197,14 @@ final class UpdateService: @unchecked Sendable {
                                responseStr.contains("200") {
                                 continuation.resume()
                             } else {
-                                continuation.resume(throwing: UpdateError.agentRejected)
+                                let detail: String
+                                if let responseData,
+                                   let responseStr = String(data: responseData, encoding: .utf8) {
+                                    detail = responseStr.prefix(200).trimmingCharacters(in: .whitespacesAndNewlines)
+                                } else {
+                                    detail = "No response from agent"
+                                }
+                                continuation.resume(throwing: UpdateError.agentRejected(detail: detail))
                             }
                         }
                     })
@@ -230,7 +237,7 @@ enum UpdateError: Error, LocalizedError {
     case githubAPIError
     case timeout
     case cancelled
-    case agentRejected
+    case agentRejected(detail: String)
 
     var errorDescription: String? {
         switch self {
@@ -242,7 +249,7 @@ enum UpdateError: Error, LocalizedError {
         case .githubAPIError: return "GitHub API request failed"
         case .timeout: return "Update request timed out"
         case .cancelled: return "Update cancelled"
-        case .agentRejected: return "Agent rejected the update"
+        case .agentRejected(let detail): return "Agent rejected: \(detail)"
         }
     }
 }
