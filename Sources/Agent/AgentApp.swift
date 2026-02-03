@@ -4,13 +4,14 @@ import SwiftUI
 struct AgentApp: App {
     @NSApplicationDelegateAdaptor(AgentAppDelegate.self) var delegate
     @StateObject private var server = MetricsServer()
+    @StateObject private var updateService = AgentUpdateService()
 
     var body: some Scene {
         MenuBarExtra(
             "Computer Dashboard Agent",
             systemImage: "gauge.with.dots.needle.bottom.50percent"
         ) {
-            AgentMenuView(server: server)
+            AgentMenuView(server: server, updateService: updateService)
         }
     }
 }

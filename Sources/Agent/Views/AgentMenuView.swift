@@ -1,8 +1,10 @@
 import SwiftUI
 import ServiceManagement
+import Shared
 
 struct AgentMenuView: View {
     @ObservedObject var server: MetricsServer
+    @ObservedObject var updateService: AgentUpdateService
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
@@ -25,6 +27,33 @@ struct AgentMenuView: View {
 
             Divider()
 
+            // Version and update status
+            Label("Agent v\(AppVersion.current)", systemImage: "app.badge")
+                .foregroundStyle(.secondary)
+
+            if updateService.isUpdating {
+                HStack(spacing: 4) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Updating...")
+                        .font(.caption)
+                }
+            }
+
+            if let error = updateService.lastError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+            }
+
+            Button("Check for Updates") {
+                Task { await updateService.forceCheck() }
+            }
+            .disabled(updateService.isUpdating)
+
+            Divider()
+
             Toggle("Launch at Login", isOn: $launchAtLogin)
                 .onChange(of: launchAtLogin) { _, newValue in
                     do {
@@ -34,7 +63,6 @@ struct AgentMenuView: View {
                             try SMAppService.mainApp.unregister()
                         }
                     } catch {
-                        // Revert toggle if registration failed
                         launchAtLogin = SMAppService.mainApp.status == .enabled
                     }
                 }
