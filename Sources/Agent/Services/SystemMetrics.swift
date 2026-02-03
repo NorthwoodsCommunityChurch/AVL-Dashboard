@@ -222,12 +222,12 @@ final class TemperatureReader {
     private typealias EventGetFloatValueFn = @convention(c) (CFTypeRef, UInt32) -> Double
     private typealias ServiceCopyPropertyFn = @convention(c) (CFTypeRef, CFString) -> Unmanaged<CFTypeRef>?
 
+    private let clientCreate: ClientCreateFn?
+    private let clientSetMatching: ClientSetMatchingFn?
     private let clientCopyServices: ClientCopyServicesFn?
     private let serviceCopyEvent: ServiceCopyEventFn?
     private let eventGetFloatValue: EventGetFloatValueFn?
     private let serviceCopyProperty: ServiceCopyPropertyFn?
-
-    private let systemClient: CFTypeRef?
 
     private let kIOHIDEventTypeTemperature: UInt32 = 15
 
@@ -238,6 +238,11 @@ final class TemperatureReader {
         "PMU TP",                // Die temperature
     ]
 
+    private let matching: [String: Int] = [
+        "PrimaryUsagePage": 0xff00,
+        "PrimaryUsage": 5
+    ]
+
     init() {
         let handle = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW)
 
@@ -246,34 +251,27 @@ final class TemperatureReader {
             return unsafeBitCast(sym, to: T.self)
         }
 
-        let create: ClientCreateFn? = load("IOHIDEventSystemClientCreate")
-        let setMatching: ClientSetMatchingFn? = load("IOHIDEventSystemClientSetMatching")
+        clientCreate = load("IOHIDEventSystemClientCreate")
+        clientSetMatching = load("IOHIDEventSystemClientSetMatching")
         clientCopyServices = load("IOHIDEventSystemClientCopyServices")
         serviceCopyEvent = load("IOHIDServiceClientCopyEvent")
         eventGetFloatValue = load("IOHIDEventGetFloatValue")
         serviceCopyProperty = load("IOHIDServiceClientCopyProperty")
-
-        if let create {
-            systemClient = create(kCFAllocatorDefault).takeRetainedValue()
-        } else {
-            systemClient = nil
-        }
-
-        if let client = systemClient, let setMatching {
-            let matching: [String: Int] = [
-                "PrimaryUsagePage": 0xff00,
-                "PrimaryUsage": 5
-            ]
-            setMatching(client, matching as CFDictionary)
-        }
     }
 
     /// Reads the maximum CPU die temperature. Uses CPU-specific sensors when available,
     /// falls back to the hottest sensor if no CPU sensors are identified.
+    /// Creates a fresh HID client on each call to ensure live readings (a reused client
+    /// returns stale events unless scheduled on a run loop).
     func readCPUTemperature() -> Double? {
-        guard let client = systemClient,
-              let copyServices = clientCopyServices,
-              let servicesRef = copyServices(client) else { return nil }
+        guard let create = clientCreate,
+              let setMatching = clientSetMatching,
+              let copyServices = clientCopyServices else { return nil }
+
+        let client = create(kCFAllocatorDefault).takeRetainedValue()
+        setMatching(client, matching as CFDictionary)
+
+        guard let servicesRef = copyServices(client) else { return nil }
 
         let services = servicesRef.takeRetainedValue() as? [CFTypeRef] ?? []
         guard !services.isEmpty else { return nil }
