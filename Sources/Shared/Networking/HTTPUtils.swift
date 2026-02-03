@@ -73,17 +73,32 @@ public enum HTTPUtils {
     }
 
     /// Parse the HTTP method from raw request data.
+    /// Only reads up to the first CRLF to avoid binary body data.
     public static func parseMethod(from data: Data) -> String? {
-        guard let str = String(data: data.prefix(64), encoding: .utf8) else { return nil }
-        return str.split(separator: " ").first.map(String.init)
+        guard let firstLine = extractFirstLine(from: data) else { return nil }
+        return firstLine.split(separator: " ").first.map(String.init)
     }
 
     /// Parse the request path from raw request data.
+    /// Only reads up to the first CRLF to avoid binary body data.
     public static func parsePath(from data: Data) -> String? {
-        guard let str = String(data: data.prefix(256), encoding: .utf8) else { return nil }
-        let firstLine = str.split(separator: "\r\n").first ?? Substring(str)
+        guard let firstLine = extractFirstLine(from: data) else { return nil }
         let parts = firstLine.split(separator: " ")
         guard parts.count >= 2 else { return nil }
         return String(parts[1])
+    }
+
+    /// Extract just the first line (request line) from raw HTTP data, stopping at CRLF
+    /// to avoid attempting UTF-8 conversion on binary body data.
+    private static func extractFirstLine(from data: Data) -> String? {
+        let crlf = Data([0x0D, 0x0A])
+        let searchArea = data.prefix(256)
+        let endIndex: Data.Index
+        if let range = searchArea.range(of: crlf) {
+            endIndex = range.lowerBound
+        } else {
+            endIndex = searchArea.endIndex
+        }
+        return String(data: data[data.startIndex..<endIndex], encoding: .utf8)
     }
 }
