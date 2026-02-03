@@ -23,6 +23,8 @@ final class DashboardViewModel {
     var isDownloadingDashboardUpdate: Bool = false
     /// Error message if dashboard self-update failed.
     var dashboardUpdateError: String?
+    /// Whether a batch "update all agents" operation is in progress.
+    var isUpdatingAllAgents: Bool = false
 
     var sortedMachines: [MachineViewModel] {
         switch sortOrder {
@@ -324,6 +326,27 @@ final class DashboardViewModel {
     func machineNeedsUpdate(_ machine: MachineViewModel) -> Bool {
         guard !dashboardUpdateAvailable else { return false }
         return updateService.agentNeedsUpdate(version: machine.agentVersion)
+    }
+
+    /// Whether any agents need updating.
+    var anyAgentNeedsUpdate: Bool {
+        machines.contains { machineNeedsUpdate($0) }
+    }
+
+    /// Push updates to all agents that need one, in parallel.
+    func updateAllAgents() async {
+        let outdated = machines.filter { machineNeedsUpdate($0) }
+        guard !outdated.isEmpty else { return }
+
+        await MainActor.run { isUpdatingAllAgents = true }
+
+        await withTaskGroup(of: Void.self) { group in
+            for machine in outdated {
+                group.addTask { await self.pushUpdate(to: machine) }
+            }
+        }
+
+        await MainActor.run { isUpdatingAllAgents = false }
     }
 
     /// Push an update to a specific agent. Uses the machine's known endpoint.

@@ -8,7 +8,7 @@ struct AgentApp: App {
 
     var body: some Scene {
         MenuBarExtra(
-            "Computer Dashboard Agent",
+            "AVL Dashboard Agent",
             systemImage: "gauge.with.dots.needle.bottom.50percent"
         ) {
             AgentMenuView(server: server, updateService: updateService)

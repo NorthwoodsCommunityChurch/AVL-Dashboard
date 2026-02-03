@@ -5,7 +5,7 @@
     <key>CFBundleName</key>
     <string>DashboardAgent</string>
     <key>CFBundleDisplayName</key>
-    <string>Dashboard Agent</string>
+    <string>AVL Dashboard Agent</string>
     <key>CFBundleIdentifier</key>
     <string>com.computerdash.agent</string>
     <key>CFBundleVersion</key>

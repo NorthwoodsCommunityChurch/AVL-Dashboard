@@ -58,6 +58,20 @@ struct DashboardGridView: View {
                     }
                     .disabled(viewModel.isDownloadingDashboardUpdate)
                     .help("Download and install the latest version")
+                } else if viewModel.anyAgentNeedsUpdate {
+                    Button {
+                        Task { await viewModel.updateAllAgents() }
+                    } label: {
+                        if viewModel.isUpdatingAllAgents {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label("Update All Agents", systemImage: "arrow.down.circle")
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    .disabled(viewModel.isUpdatingAllAgents)
+                    .help("Push updates to all outdated agents")
                 } else {
                     Button {
                         Task { await viewModel.forceCheckForUpdates() }
