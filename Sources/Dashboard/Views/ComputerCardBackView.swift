@@ -37,13 +37,13 @@ struct ComputerCardBackView: View {
                 }
             }
 
-            // MAC Address (read-only)
-            if let mac = machine.networkInfo?.macAddress {
+            // Network interfaces (MAC addresses, selectable)
+            ForEach(machine.networks, id: \.interfaceName) { network in
                 HStack(spacing: 4) {
-                    Image(systemName: "network")
+                    Image(systemName: network.interfaceType == "Wi-Fi" ? "wifi" : "cable.connector.horizontal")
                         .font(.system(size: 9))
                         .foregroundStyle(.secondary)
-                    Text(mac)
+                    Text("\(network.interfaceName): \(network.macAddress)")
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)

@@ -1,5 +1,6 @@
 import Foundation
 import IOKit
+import CoreWLAN
 import Shared
 
 final class SystemMetrics {
@@ -9,11 +10,13 @@ final class SystemMetrics {
     private let cachedHardwareUUID: String
     private let cachedChipType: String
     private let cachedFileVault: Bool
+    private let wifiInterfaceNames: Set<String>
 
     init() {
         cachedHardwareUUID = Self.readHardwareUUID()
         cachedChipType = Self.readChipType()
         cachedFileVault = Self.checkFileVault()
+        wifiInterfaceNames = Set(CWWiFiClient.shared().interfaceNames() ?? [])
     }
 
     // MARK: - Full Status Snapshot
@@ -28,7 +31,7 @@ final class SystemMetrics {
             uptimeSeconds: systemUptime(),
             osVersion: osVersion(),
             chipType: cachedChipType,
-            network: networkInfo(),
+            networks: networkInterfaces(),
             fileVaultEnabled: cachedFileVault,
             agentVersion: AppVersion.current
         )
@@ -95,54 +98,56 @@ final class SystemMetrics {
 
     // MARK: - Network Info
 
-    func networkInfo() -> NetworkInfo? {
+    func networkInterfaces() -> [NetworkInfo] {
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return nil }
+        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return [] }
         defer { freeifaddrs(ifaddr) }
 
-        var ipAddress: String?
-        var interfaceName: String?
+        var results: [NetworkInfo] = []
+        var seen = Set<String>()
 
-        // Find the first active non-loopback IPv4 interface
-        var ptr = firstAddr
-        while true {
-            let flags = Int32(ptr.pointee.ifa_flags)
+        var ptr: UnsafeMutablePointer<ifaddrs>? = firstAddr
+        while let current = ptr {
+            defer { ptr = current.pointee.ifa_next }
+
+            let flags = Int32(current.pointee.ifa_flags)
             let isUp = (flags & IFF_UP) != 0
             let isLoopback = (flags & IFF_LOOPBACK) != 0
 
-            if isUp && !isLoopback {
-                let addr = ptr.pointee.ifa_addr.pointee
-                if addr.sa_family == UInt8(AF_INET) {
-                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-                    if getnameinfo(
-                        ptr.pointee.ifa_addr, socklen_t(addr.sa_len),
-                        &hostname, socklen_t(hostname.count),
-                        nil, 0, NI_NUMERICHOST
-                    ) == 0 {
-                        let name = String(cString: ptr.pointee.ifa_name)
-                        // Prefer en0 (WiFi) or en* interfaces
-                        if name.hasPrefix("en") {
-                            ipAddress = String(cString: hostname)
-                            interfaceName = name
-                            break
-                        } else if ipAddress == nil {
-                            ipAddress = String(cString: hostname)
-                            interfaceName = name
-                        }
-                    }
-                }
-            }
+            guard isUp && !isLoopback else { continue }
 
-            guard let next = ptr.pointee.ifa_next else { break }
-            ptr = next
+            let addr = current.pointee.ifa_addr.pointee
+            guard addr.sa_family == UInt8(AF_INET) else { continue }
+
+            var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            guard getnameinfo(
+                current.pointee.ifa_addr, socklen_t(addr.sa_len),
+                &hostname, socklen_t(hostname.count),
+                nil, 0, NI_NUMERICHOST
+            ) == 0 else { continue }
+
+            let name = String(cString: current.pointee.ifa_name)
+            guard name.hasPrefix("en"), !seen.contains(name) else { continue }
+
+            seen.insert(name)
+            let ip = String(cString: hostname)
+            let mac = readMACAddress(interface: name)
+            let ifType = interfaceType(for: name)
+
+            results.append(NetworkInfo(
+                interfaceName: name,
+                ipAddress: ip,
+                macAddress: mac,
+                interfaceType: ifType
+            ))
         }
 
-        guard let ip = ipAddress, let ifName = interfaceName else { return nil }
-
-        let macAddr = readMACAddress(interface: ifName)
-        let ifType = interfaceType(for: ifName)
-
-        return NetworkInfo(ipAddress: ip, macAddress: macAddr, interfaceType: ifType)
+        // Sort: Ethernet first (preferred for VNC), then by interface name
+        return results.sorted { a, b in
+            if a.interfaceType != "Wi-Fi" && b.interfaceType == "Wi-Fi" { return true }
+            if a.interfaceType == "Wi-Fi" && b.interfaceType != "Wi-Fi" { return false }
+            return a.interfaceName < b.interfaceName
+        }
     }
 
     private func readMACAddress(interface: String) -> String {
@@ -177,15 +182,11 @@ final class SystemMetrics {
     }
 
     private func interfaceType(for name: String) -> String {
-        switch name {
-        case "en0": return "Wi-Fi"
-        case "en1": return "Ethernet"
-        default:
-            if name.hasPrefix("en") { return "Ethernet" }
-            if name.hasPrefix("bridge") { return "Bridge" }
-            if name.hasPrefix("utun") { return "VPN" }
-            return name
-        }
+        if wifiInterfaceNames.contains(name) { return "Wi-Fi" }
+        if name.hasPrefix("en") { return "Ethernet" }
+        if name.hasPrefix("bridge") { return "Bridge" }
+        if name.hasPrefix("utun") { return "VPN" }
+        return name
     }
 
     // MARK: - FileVault Status (cached at launch)

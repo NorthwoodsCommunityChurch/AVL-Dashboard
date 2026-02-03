@@ -353,8 +353,8 @@ final class DashboardViewModel {
             return activeEndpoints[serviceName]
         }
 
-        // Last resort: use networkInfo IP
-        if let ip = machine.networkInfo?.ipAddress {
+        // Last resort: use primary network IP
+        if let ip = machine.primaryNetwork?.ipAddress {
             return NWEndpoint.hostPort(
                 host: NWEndpoint.Host(ip),
                 port: NWEndpoint.Port(rawValue: BonjourConstants.defaultPort)!

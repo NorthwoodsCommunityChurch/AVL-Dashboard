@@ -19,7 +19,8 @@ let package = Package(
             dependencies: ["Shared"],
             path: "Sources/Agent",
             linkerSettings: [
-                .linkedFramework("IOKit")
+                .linkedFramework("IOKit"),
+                .linkedFramework("CoreWLAN")
             ]
         ),
     ]

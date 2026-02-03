@@ -14,7 +14,7 @@ final class MachineViewModel: Identifiable {
     var cpuUsage: Double = 0
     var networkBytesPerSec: Double = 0
     var uptimeSeconds: TimeInterval = 0
-    var networkInfo: NetworkInfo?
+    var networks: [NetworkInfo] = []
     var fileVaultEnabled: Bool = false
     var agentVersion: String?
     var isUpdating: Bool = false
@@ -28,6 +28,9 @@ final class MachineViewModel: Identifiable {
     var consecutiveFailures: Int = 0
 
     var isManual: Bool { manualEndpoint != nil }
+
+    /// The first/primary network interface (Ethernet preferred; used for VNC and fallback endpoint).
+    var primaryNetwork: NetworkInfo? { networks.first }
     var id: String { hardwareUUID }
 
     init(from identity: MachineIdentity) {
@@ -55,7 +58,7 @@ final class MachineViewModel: Identifiable {
         networkBytesPerSec = status.networkBytesPerSec
         uptimeSeconds = status.uptimeSeconds
         hostname = status.hostname
-        networkInfo = status.network
+        networks = status.networks
         fileVaultEnabled = status.fileVaultEnabled
         agentVersion = status.agentVersion
         isOnline = true

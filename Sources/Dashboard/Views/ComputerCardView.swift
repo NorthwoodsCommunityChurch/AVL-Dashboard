@@ -35,7 +35,7 @@ struct ComputerCardView: View {
         VStack(spacing: 4) {
             // Machine name — tap to screen share
             Button {
-                if let ip = machine.networkInfo?.ipAddress,
+                if let ip = machine.primaryNetwork?.ipAddress,
                    let url = URL(string: "vnc://\(ip)") {
                     openURL(url)
                 }
@@ -60,7 +60,7 @@ struct ComputerCardView: View {
                 .clipShape(Capsule())
             }
             .buttonStyle(.plain)
-            .disabled(machine.networkInfo?.ipAddress == nil)
+            .disabled(machine.primaryNetwork?.ipAddress == nil)
             .padding(.bottom, 2)
 
             // Three rings — Apple Watch style
@@ -99,31 +99,30 @@ struct ComputerCardView: View {
                 Label(machine.uptimeSeconds.formattedUptime, systemImage: "clock")
             }
 
-            if let network = machine.networkInfo {
+            ForEach(machine.networks, id: \.interfaceName) { network in
                 metricTile {
-                    Label("\(network.ipAddress) (\(network.interfaceType))", systemImage: "network")
-                        .lineLimit(1)
+                    HStack(spacing: 3) {
+                        Image(systemName: network.interfaceType == "Wi-Fi" ? "wifi" : "cable.connector.horizontal")
+                            .font(.system(size: 9))
+                        Text("\(network.ipAddress) (\(network.interfaceType))")
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        Text(network.macAddress)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.5)
+                    }
                 }
             }
 
-            HStack(spacing: 4) {
-                metricTile {
-                    HStack(spacing: 3) {
-                        Image(systemName: machine.fileVaultEnabled ? "lock.fill" : "lock.open")
-                            .font(.system(size: 9))
-                        Text(machine.fileVaultEnabled ? "FileVault" : "No FV")
-                    }
-                    .foregroundStyle(machine.fileVaultEnabled ? .orange : .green)
+            metricTile {
+                HStack(spacing: 3) {
+                    Image(systemName: machine.fileVaultEnabled ? "lock.fill" : "lock.open")
+                        .font(.system(size: 9))
+                    Text(machine.fileVaultEnabled ? "FileVault" : "No FV")
                 }
-
-                if let mac = machine.networkInfo?.macAddress {
-                    metricTile {
-                        Text(mac)
-                            .font(.system(.caption2, design: .monospaced))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                    }
-                }
+                .foregroundStyle(machine.fileVaultEnabled ? Color.orange : Color.green)
             }
 
             Spacer(minLength: 0)
