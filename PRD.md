@@ -1,4 +1,4 @@
-# Computer Dashboard - Product Requirements Document
+# AVL Dashboard - Product Requirements Document
 
 ## Overview
 
@@ -69,7 +69,8 @@ Each agent runs a lightweight HTTP server, binding to port **49990** by default 
     "macAddress": "AA:BB:CC:DD:EE:FF",
     "interfaceType": "Wi-Fi"
   },
-  "fileVaultEnabled": true
+  "fileVaultEnabled": true,
+  "agentVersion": "1.0.0"
 }
 ```
 
@@ -78,12 +79,24 @@ Each agent runs a lightweight HTTP server, binding to port **49990** by default 
 - `cpuUsagePercent` — Delta-based CPU usage from `host_statistics` tick counters (0–100)
 - `networkBytesPerSec` — Combined in+out throughput across active `en*` interfaces
 - `fileVaultEnabled` — Cached at agent launch via `fdesetup status`
+- `agentVersion` — Compile-time version from `AppVersion.current` (optional field for backward compat)
 
 ### Polling Behavior
 
 - Dashboard polls each known agent every **5 seconds**
 - If an agent fails to respond for **3 consecutive polls**, it is marked offline
 - If an agent responds again after being offline, it is marked online immediately
+
+### Agent Update Endpoint
+
+**`POST /update`** — Receives a zip file containing a new `.app` bundle.
+
+- Content-Type: `application/zip`
+- Max size: 50 MB (enforced via Content-Length header)
+- Only one update can be processed at a time (`isUpdating` guard)
+- Accumulates chunked body data until Content-Length is reached
+- On success: responds 200 OK, then extracts the zip, writes a shell trampoline script that replaces the app bundle and relaunches
+- The trampoline script waits for the agent process to exit, removes the old bundle, moves the new one in place, re-signs ad hoc, and opens the app
 
 ---
 
@@ -106,12 +119,29 @@ The agent is passive by design:
 - Single recurring 5-second timer tracks dashboard connection status
 - ~0.1% CPU, ~55 MB RSS in steady state
 
+### Agent Self-Update
+
+The agent independently checks GitHub for newer releases, eliminating the need for Dashboard push updates as the sole update mechanism:
+
+- Checks `GET /repos/NorthwoodsCommunityChurch/AVL-Dashboard/releases` on launch (after 5-second delay) and every **30 minutes**
+- Results cached for 15 minutes to avoid redundant checks
+- Filters release assets for files matching `*agent*.zip`
+- If a newer version is found, automatically downloads the zip and applies via the existing `UpdateManager` trampoline
+- On error, sets `lastError` and retries on the next cycle
+- Rate budget: 10 agents + 1 dashboard at 30-min intervals = ~22 requests/hour (under GitHub's 60/hour unauthenticated limit)
+
+This provides a second update path alongside Dashboard push updates. If either mechanism breaks, the other still works.
+
 ### Menu Bar
 
 - SF Symbol icon: `gauge.with.dots.needle.bottom.50percent`
 - Dropdown shows:
+  - "Agent v{version}" label showing `AppVersion.current`
   - Active port number (e.g., "Serving on port 49990")
   - Connection status: "Dashboard Connected" / "No Dashboard Connected"
+  - Update status: ProgressView + "Updating..." when downloading/applying
+  - Error text (in red) if last update check failed
+  - "Check for Updates" button — triggers immediate GitHub check
   - Quit button
 
 ### Metrics Collection
@@ -134,7 +164,7 @@ The agent is passive by design:
 ### Main Window
 
 - Standard macOS window, resizable
-- Title bar: "Computer Dashboard"
+- Title bar: "AVL Dashboard"
 - Supports light/dark mode (uses `.thickMaterial` backgrounds)
 - Content: Scrollable grid of computer cards
 
@@ -144,6 +174,7 @@ The agent is passive by design:
 - Grid spacing: 8pt
 - Cards fill available columns automatically
 - "+" toolbar button opens Add Machine sheet for manual endpoints
+- "Update All Agents" toolbar button (orange `arrow.down.circle` icon) — appears when any agent is outdated; pushes updates to all outdated agents in parallel using `withTaskGroup`
 
 ### Sorting
 
@@ -199,7 +230,9 @@ Clicking a card flips it with a 3D rotation animation to reveal:
 
 - **Display name** — Editable text field (defaults to hostname)
 - **Temperature thresholds** — Good, Warning, Critical in Celsius (defaults: 50, 70, 90)
-- **OS version and chip type** — Read-only labels
+- **MAC address** — Read-only, selectable text
+- **Agent version** — Shows running version (e.g., "Agent v1.0.0"); "unknown" for old agents
+- **Update button** — Appears when agent is outdated and dashboard is up to date; pushes new zip to agent
 - **Done button** — Flips back, saves settings
 - **Delete button** — Removes machine with confirmation alert
 
@@ -250,6 +283,73 @@ Stored as a JSON file in Application Support:
 
 ---
 
+## Update System
+
+### Version Infrastructure
+
+- Both apps share a compile-time version constant: `AppVersion.current` in `Sources/Shared/Version.swift`
+- Agents include `agentVersion` in their `/status` response
+- SPM executables don't read Info.plist at runtime, so the version is a code constant
+- The build script (`Scripts/build.sh`) extracts the version from `Version.swift` and injects it into both `Info.plist` files at build time using `PlistBuddy`, so the macOS About dialog shows the correct version
+
+### GitHub Release Checking
+
+- Dashboard checks `GET /repos/NorthwoodsCommunityChurch/AVL-Dashboard/releases` on launch and every 15 minutes
+- Results are cached for 15 minutes; the toolbar "Check for Updates" button bypasses cache
+- Finds the newest release by semantic version comparison across all releases (including pre-releases)
+- Semantic versioning: pre-release tags (e.g., `1.0.0-alpha`) sort lower than the same version without (`1.0.0`)
+
+### Dashboard Self-Update
+
+- When a newer version is detected, the toolbar shows an orange "Install v{version}" button
+- Clicking it downloads the Dashboard zip from the GitHub release assets
+- Extracts the zip, locates the `.app` bundle, and uses a shell trampoline script to:
+  1. Wait for the current process to exit
+  2. Remove the old app bundle
+  3. Move the new bundle into place
+  4. Re-sign ad hoc (`codesign --force --deep --sign -`)
+  5. Relaunch via `open`
+  6. Clean up temp files
+
+### Agent Push Updates (Dashboard → Agent)
+
+- Agent update badges only appear when the **dashboard itself is up to date** (dashboard-first update flow)
+- Card front shows an orange arrow badge overlay when the agent is outdated
+- Card back shows an "Update" button next to the agent version label
+- Dashboard downloads the agent zip from GitHub, then POSTs it to the agent's `/update` endpoint
+- "Update All Agents" toolbar button pushes updates to all outdated agents in parallel
+- Agent applies the update using the same trampoline mechanism
+
+### Agent Pull Updates (Agent → GitHub)
+
+- Each agent independently checks GitHub releases every 30 minutes (see Agent Self-Update above)
+- No Dashboard involvement required — agents can update themselves even when no Dashboard is running
+- Provides redundancy: if push updates break (e.g., due to HTTP parsing bugs), pull updates still work
+- If both mechanisms trigger simultaneously, the `isUpdating` guard prevents conflicts
+
+### Update Flow
+
+```
+Dashboard-initiated (push):
+1. Dashboard checks GitHub → finds newer version
+2. If Dashboard is outdated:
+   - Show "Install v{version}" in toolbar
+   - Hide all agent update badges
+3. User updates Dashboard → app restarts with new version
+4. Dashboard re-checks GitHub → now up to date
+5. Agent cards show update badges for outdated agents
+6. User clicks "Update" on card back (or "Update All Agents" in toolbar)
+7. Dashboard POSTs zip to agent → agent restarts with new version
+
+Agent-initiated (pull):
+1. Agent checks GitHub every 30 minutes
+2. Finds newer release with agent zip asset
+3. Downloads and applies update automatically
+4. Agent restarts with new version
+```
+
+---
+
 ## Technology Stack
 
 | Component          | Technology                                |
@@ -270,21 +370,23 @@ Stored as a JSON file in Application Support:
 ## Project Structure
 
 ```
-Computer Dashboard/
+AVL Dashboard/
 ├── Package.swift                              # SPM manifest (3 targets: Shared, Dashboard, Agent)
 ├── PRD.md
 ├── .gitignore
 │
 ├── Sources/
 │   ├── Shared/                                # Shared library
+│   │   ├── Version.swift                      # AppVersion.current compile-time constant
 │   │   ├── Models/
 │   │   │   ├── MachineStatus.swift            # JSON status payload + NetworkInfo
 │   │   │   ├── MachineIdentity.swift          # Persistent machine record
 │   │   │   ├── MachineThresholds.swift        # Temperature threshold settings
+│   │   │   ├── GitHubRelease.swift            # GitHub API models + SemanticVersion
 │   │   │   └── SortOrder.swift                # Grid sort options
 │   │   ├── Networking/
 │   │   │   ├── BonjourConstants.swift          # Service type, default port, paths
-│   │   │   └── HTTPUtils.swift                # HTTP response builders
+│   │   │   └── HTTPUtils.swift                # HTTP request/response builders + parsing
 │   │   └── Extensions/
 │   │       └── TimeIntervalFormat.swift        # Uptime + bytes/sec formatting
 │   │
@@ -304,7 +406,9 @@ Computer Dashboard/
 │   │   └── Services/
 │   │       ├── DiscoveryService.swift          # Bonjour NWBrowser wrapper
 │   │       ├── PollingService.swift            # HTTP polling loop
-│   │       └── PersistenceService.swift        # JSON load/save
+│   │       ├── PersistenceService.swift        # JSON load/save
+│   │       ├── UpdateService.swift             # GitHub release checking + agent push
+│   │       └── DashboardUpdateManager.swift    # Dashboard self-update via trampoline
 │   │
 │   └── Agent/                                  # Menu bar agent app
 │       ├── AgentApp.swift                      # App entry point (menu bar)
@@ -312,7 +416,9 @@ Computer Dashboard/
 │       │   └── AgentMenuView.swift             # Dropdown menu content
 │       └── Services/
 │           ├── MetricsServer.swift             # HTTP server + Bonjour registration
-│           └── SystemMetrics.swift             # All metric collectors
+│           ├── SystemMetrics.swift             # All metric collectors
+│           ├── AgentUpdateService.swift        # Periodic GitHub release checking + auto-apply
+│           └── UpdateManager.swift             # Agent self-update via trampoline
 │
 ├── Resources/
 │   ├── Agent-Info.plist
@@ -334,6 +440,14 @@ Computer Dashboard/
 - **Non-sandboxed**: Required for IOKit sensor access, network server, and `fdesetup` subprocess.
 - **VNC URLs**: Constructed from machine-reported IP addresses. Only opens the system Screen Sharing client.
 - **Private API usage**: IOKit HID temperature API accessed via `dlopen`/`dlsym`. Not App Store compatible; may break across macOS versions.
+- **Update endpoint**: `POST /update` accepts unsigned zip payloads with no authentication. Acceptable for trusted local networks. 50 MB size limit. Update payloads are ad-hoc re-signed after extraction.
+- **GitHub API**: Unauthenticated requests to the public releases endpoint. Subject to rate limiting (60 req/hour).
+
+---
+
+## Known Issues
+
+1. **Stale temperature readings** — Multiple agents report frozen CPU temperatures (e.g., several machines all showing 51°C when actual temps differ). The IOKit HID private API (`IOHIDServiceClientCopyEvent`) appears to return cached sensor data rather than live readings. Attempted fix in v1.0.10: recreating `IOHIDEventSystemClient` on each poll instead of reusing a stored client — did not resolve. Possible avenues: scheduling the client on a run loop via `IOHIDEventSystemClientScheduleWithRunLoop`, or exploring alternative temperature APIs (e.g., SMC keys via AppleSMC).
 
 ---
 
@@ -342,7 +456,6 @@ Computer Dashboard/
 - Authentication / encryption (local trusted network assumption)
 - Historical data / graphing
 - Notifications / alerts
-- Agent auto-update mechanism
 - Windows or Linux support
 - App Store distribution (due to private IOKit API usage)
 
@@ -359,3 +472,10 @@ Computer Dashboard/
 7. **Screen sharing**: Machine name button opens VNC connection using the machine's reported IP.
 8. **Tailscale/VPN support**: Manual endpoint entry allows monitoring machines across network boundaries.
 9. **FileVault caching**: `fdesetup status` is called once at agent launch rather than per-poll to minimize subprocess overhead.
+10. **Version source**: Compile-time constant in `Version.swift` because SPM executables don't read Info.plist at runtime.
+11. **Dashboard-first update flow**: Agent update badges are hidden when the dashboard itself is outdated. Ensures the dashboard has the latest push logic before updating agents.
+12. **Self-update mechanism**: Shell trampoline script that outlives the process, replaces the `.app` bundle, re-signs, and relaunches. Same pattern used by both Dashboard and Agent.
+13. **GitHub API strategy**: Uses `/releases` (not `/releases/latest`) to include pre-releases. Results cached 15 minutes.
+14. **Dual update paths**: Agents can be updated via Dashboard push (POST to `/update`) or autonomous pull (agent checks GitHub every 30 min). Redundancy prevents the chicken-and-egg problem where a bug in the push mechanism makes agents un-updatable.
+15. **Agent check interval**: 30 minutes balances freshness against GitHub rate limits. 10 agents + 1 dashboard = ~22 requests/hour (under the 60/hour unauthenticated limit).
+16. **Build-time version injection**: `Scripts/build.sh` extracts the version from `Version.swift` and writes it into both `Info.plist` files using `PlistBuddy`, so the macOS About dialog matches `AppVersion.current`.

@@ -27,3 +27,9 @@ build/
 *.xcarchive
 *.zip
 *.dmg
+
+# Windows build artifacts
+*.exe
+
+# Go
+agent-windows/vendor/

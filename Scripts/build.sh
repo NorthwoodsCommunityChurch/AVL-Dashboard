@@ -61,9 +61,31 @@ cp "$RESOURCES_DIR/AppIcon.icns" "$AGENT_CONTENTS/Resources/AppIcon.icns"
 codesign --force --deep --sign - "$AGENT_APP"
 echo "    DashboardAgent.app created at $AGENT_APP"
 
+# --- Build Windows Agent ---
+echo "==> Building Windows Agent..."
+WINDOWS_EXE="$BUILD_DIR/DashboardAgent.exe"
+
+(
+    cd "$PROJECT_DIR/agent-windows"
+    GOOS=windows GOARCH=amd64 go build \
+        -ldflags="-H windowsgui -X main.version=$APP_VERSION" \
+        -o "$WINDOWS_EXE" \
+        .
+)
+echo "    DashboardAgent.exe created at $WINDOWS_EXE"
+
+# --- Create release archives ---
+echo "==> Creating release archives..."
+(cd "$BUILD_DIR" && zip -r "Dashboard-v${APP_VERSION}-aarch64.zip" Dashboard.app)
+(cd "$BUILD_DIR" && zip -r "DashboardAgent-v${APP_VERSION}-aarch64.zip" DashboardAgent.app)
+(cd "$BUILD_DIR" && zip -j "DashboardAgent-v${APP_VERSION}-windows-amd64.zip" DashboardAgent.exe)
+
 echo ""
 echo "==> Build complete!"
-echo "    Dashboard:  $DASH_APP"
-echo "    Agent:      $AGENT_APP"
+echo "    Dashboard:       $DASH_APP"
+echo "    macOS Agent:     $AGENT_APP"
+echo "    Windows Agent:   $WINDOWS_EXE"
 echo ""
-echo "Note: On first launch, right-click > Open to bypass Gatekeeper."
+echo "    Release archives in $BUILD_DIR/"
+echo ""
+echo "Note: On first launch (macOS), right-click > Open to bypass Gatekeeper."

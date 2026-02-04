@@ -221,13 +221,17 @@ final class TemperatureReader {
     private typealias ServiceCopyEventFn = @convention(c) (CFTypeRef, UInt32, CFTypeRef?, UInt32) -> Unmanaged<CFTypeRef>?
     private typealias EventGetFloatValueFn = @convention(c) (CFTypeRef, UInt32) -> Double
     private typealias ServiceCopyPropertyFn = @convention(c) (CFTypeRef, CFString) -> Unmanaged<CFTypeRef>?
+    private typealias ClientScheduleFn = @convention(c) (CFTypeRef, CFRunLoop, CFString) -> Void
 
-    private let clientCreate: ClientCreateFn?
-    private let clientSetMatching: ClientSetMatchingFn?
     private let clientCopyServices: ClientCopyServicesFn?
     private let serviceCopyEvent: ServiceCopyEventFn?
     private let eventGetFloatValue: EventGetFloatValueFn?
     private let serviceCopyProperty: ServiceCopyPropertyFn?
+
+    /// Persistent HID client scheduled on the main run loop.
+    /// The run loop delivers updated sensor events continuously, so reads
+    /// always return live data instead of stale cached snapshots.
+    private let systemClient: CFTypeRef?
 
     private let kIOHIDEventTypeTemperature: UInt32 = 15
 
@@ -251,25 +255,32 @@ final class TemperatureReader {
             return unsafeBitCast(sym, to: T.self)
         }
 
-        clientCreate = load("IOHIDEventSystemClientCreate")
-        clientSetMatching = load("IOHIDEventSystemClientSetMatching")
+        let clientCreate: ClientCreateFn? = load("IOHIDEventSystemClientCreate")
+        let clientSetMatching: ClientSetMatchingFn? = load("IOHIDEventSystemClientSetMatching")
+        let clientSchedule: ClientScheduleFn? = load("IOHIDEventSystemClientScheduleWithRunLoop")
         clientCopyServices = load("IOHIDEventSystemClientCopyServices")
         serviceCopyEvent = load("IOHIDServiceClientCopyEvent")
         eventGetFloatValue = load("IOHIDEventGetFloatValue")
         serviceCopyProperty = load("IOHIDServiceClientCopyProperty")
+
+        // Create a persistent client and schedule it on the main run loop.
+        // Without run loop scheduling, IOHIDServiceClientCopyEvent returns stale
+        // cached data (the root cause of the frozen 51°C readings).
+        if let create = clientCreate {
+            let client = create(kCFAllocatorDefault).takeRetainedValue()
+            clientSetMatching?(client, matching as CFDictionary)
+            clientSchedule?(client, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+            systemClient = client
+        } else {
+            systemClient = nil
+        }
     }
 
     /// Reads the maximum CPU die temperature. Uses CPU-specific sensors when available,
     /// falls back to the hottest sensor if no CPU sensors are identified.
-    /// Creates a fresh HID client on each call to ensure live readings (a reused client
-    /// returns stale events unless scheduled on a run loop).
     func readCPUTemperature() -> Double? {
-        guard let create = clientCreate,
-              let setMatching = clientSetMatching,
+        guard let client = systemClient,
               let copyServices = clientCopyServices else { return nil }
-
-        let client = create(kCFAllocatorDefault).takeRetainedValue()
-        setMatching(client, matching as CFDictionary)
 
         guard let servicesRef = copyServices(client) else { return nil }
 

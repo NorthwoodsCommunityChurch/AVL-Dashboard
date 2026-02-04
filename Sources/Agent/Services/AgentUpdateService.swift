@@ -74,7 +74,9 @@ final class AgentUpdateService: ObservableObject {
 
             // Find agent zip asset
             let agentAsset = release.assets.first {
-                $0.name.lowercased().contains("agent") && $0.name.hasSuffix(".zip")
+                $0.name.lowercased().contains("agent") &&
+                !$0.name.lowercased().contains("windows") &&
+                $0.name.hasSuffix(".zip")
             }
             guard let asset = agentAsset else { return }
 

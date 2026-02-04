@@ -71,7 +71,11 @@ final class UpdateService: @unchecked Sendable {
             throw UpdateError.noReleaseAvailable
         }
 
-        let agentAsset = release.assets.first { $0.name.lowercased().contains("agent") && $0.name.hasSuffix(".zip") }
+        let agentAsset = release.assets.first {
+            $0.name.lowercased().contains("agent") &&
+            !$0.name.lowercased().contains("windows") &&
+            $0.name.hasSuffix(".zip")
+        }
         guard let asset = agentAsset else {
             throw UpdateError.noAgentAssetFound
         }
