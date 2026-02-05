@@ -212,113 +212,240 @@ final class SystemMetrics {
     }
 }
 
-// MARK: - Temperature Reader (IOKit HID private API)
+// MARK: - Temperature Reader (AppleSMC direct key reading)
+//
+// Reads CPU temperature directly from the System Management Controller.
+// The previous IOKit HID approach (IOHIDEventSystemClient) returned stale cached
+// data on Apple Silicon regardless of run loop scheduling. SMC key reading is the
+// same mechanism used by iStat Menus, Stats.app, and other reliable monitoring tools.
+//
+// Key insights for Apple Silicon:
+// - Service name is "AppleSMCKeysEndpoint" (vs "AppleSMC" on Intel)
+// - Temperature keys use "flt " type with native (little-endian) byte order
+// - CPU die temp keys are Tp** (e.g. Tp05, Tp0D) not Tc** (Intel-only)
 
 final class TemperatureReader {
-    private typealias ClientCreateFn = @convention(c) (CFAllocator?) -> Unmanaged<CFTypeRef>
-    private typealias ClientSetMatchingFn = @convention(c) (CFTypeRef, CFDictionary) -> Void
-    private typealias ClientCopyServicesFn = @convention(c) (CFTypeRef) -> Unmanaged<CFArray>?
-    private typealias ServiceCopyEventFn = @convention(c) (CFTypeRef, UInt32, CFTypeRef?, UInt32) -> Unmanaged<CFTypeRef>?
-    private typealias EventGetFloatValueFn = @convention(c) (CFTypeRef, UInt32) -> Double
-    private typealias ServiceCopyPropertyFn = @convention(c) (CFTypeRef, CFString) -> Unmanaged<CFTypeRef>?
-    private typealias ClientScheduleFn = @convention(c) (CFTypeRef, CFRunLoop, CFString) -> Void
+    private var connection: io_connect_t = 0
 
-    private let clientCopyServices: ClientCopyServicesFn?
-    private let serviceCopyEvent: ServiceCopyEventFn?
-    private let eventGetFloatValue: EventGetFloatValueFn?
-    private let serviceCopyProperty: ServiceCopyPropertyFn?
+    /// Pre-discovered sensor keys with their data type and size.
+    /// Populated at init by probing candidateKeys against the SMC.
+    private var sensorKeys: [(keyCode: UInt32, dataType: UInt32, dataSize: UInt32)] = []
 
-    /// Persistent HID client scheduled on the main run loop.
-    /// The run loop delivers updated sensor events continuously, so reads
-    /// always return live data instead of stale cached snapshots.
-    private let systemClient: CFTypeRef?
+    private let smcCmdReadKeyInfo: UInt8 = 9
+    private let smcCmdReadBytes: UInt8 = 5
+    private let kernelIndexSMC: UInt32 = 2
 
-    private let kIOHIDEventTypeTemperature: UInt32 = 15
-
-    /// Sensor name prefixes for CPU die sensors on Apple Silicon.
-    private let cpuSensorPrefixes = [
-        "pACC MTR Temp Sensor",  // Performance cores
-        "eACC MTR Temp Sensor",  // Efficiency cores
-        "PMU TP",                // Die temperature
+    /// Candidate CPU die temperature keys to probe at init.
+    /// Apple Silicon P-core cluster keys vary by chip (M1/M2/M3/M4).
+    /// Intel Tc/TC keys are included for backward compatibility.
+    private static let candidateKeys: [String] = [
+        // Apple Silicon P-core cluster die temperatures
+        "Tp05", "Tp0D", "Tp0K", "Tp0S",
+        "Tp17", "Tp1E",
+        "Tp25",
+        // Intel CPU die / proximity temperatures
+        "Tc0c", "Tc1c", "Tc0p", "TC0P",
     ]
 
-    private let matching: [String: Int] = [
-        "PrimaryUsagePage": 0xff00,
-        "PrimaryUsage": 5
-    ]
+    /// Recognized SMC data type codes for temperature values.
+    private static let knownTempTypes: Set<String> = ["flt ", "sp78", "sp87"]
 
     init() {
-        let handle = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW)
-
-        func load<T>(_ name: String) -> T? {
-            guard let h = handle, let sym = dlsym(h, name) else { return nil }
-            return unsafeBitCast(sym, to: T.self)
+        // Apple Silicon uses AppleSMCKeysEndpoint; Intel uses AppleSMC
+        var service = IOServiceGetMatchingService(
+            kIOMainPortDefault,
+            IOServiceMatching("AppleSMCKeysEndpoint")
+        )
+        if service == 0 {
+            service = IOServiceGetMatchingService(
+                kIOMainPortDefault,
+                IOServiceMatching("AppleSMC")
+            )
         }
+        guard service != 0 else { return }
+        defer { IOObjectRelease(service) }
 
-        let clientCreate: ClientCreateFn? = load("IOHIDEventSystemClientCreate")
-        let clientSetMatching: ClientSetMatchingFn? = load("IOHIDEventSystemClientSetMatching")
-        let clientSchedule: ClientScheduleFn? = load("IOHIDEventSystemClientScheduleWithRunLoop")
-        clientCopyServices = load("IOHIDEventSystemClientCopyServices")
-        serviceCopyEvent = load("IOHIDServiceClientCopyEvent")
-        eventGetFloatValue = load("IOHIDEventGetFloatValue")
-        serviceCopyProperty = load("IOHIDServiceClientCopyProperty")
+        IOServiceOpen(service, mach_task_self_, 0, &connection)
+        guard connection != 0 else { return }
 
-        // Create a persistent client and schedule it on the main run loop.
-        // Without run loop scheduling, IOHIDServiceClientCopyEvent returns stale
-        // cached data (the root cause of the frozen 51°C readings).
-        if let create = clientCreate {
-            let client = create(kCFAllocatorDefault).takeRetainedValue()
-            clientSetMatching?(client, matching as CFDictionary)
-            clientSchedule?(client, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-            systemClient = client
-        } else {
-            systemClient = nil
+        // Discover which candidate keys exist on this hardware
+        for keyName in Self.candidateKeys {
+            let keyCode = fourCC(keyName)
+            guard let (dataType, dataSize) = readKeyInfo(keyCode: keyCode),
+                  dataSize > 0,
+                  Self.knownTempTypes.contains(fourCCString(dataType)) else { continue }
+            sensorKeys.append((keyCode: keyCode, dataType: dataType, dataSize: dataSize))
         }
     }
 
-    /// Reads the maximum CPU die temperature. Uses CPU-specific sensors when available,
-    /// falls back to the hottest sensor if no CPU sensors are identified.
+    deinit {
+        if connection != 0 {
+            IOServiceClose(connection)
+        }
+    }
+
+    /// Reads CPU temperature via SMC. Returns the max across all discovered sensors.
     func readCPUTemperature() -> Double? {
-        guard let client = systemClient,
-              let copyServices = clientCopyServices else { return nil }
+        guard connection != 0, !sensorKeys.isEmpty else { return nil }
 
-        guard let servicesRef = copyServices(client) else { return nil }
+        var maxTemp = -Double.infinity
+        for sensor in sensorKeys {
+            if let temp = readSMCValue(
+                keyCode: sensor.keyCode,
+                dataType: sensor.dataType,
+                dataSize: sensor.dataSize
+            ), temp > 0, temp < 150 {
+                maxTemp = max(maxTemp, temp)
+            }
+        }
+        return maxTemp > 0 ? maxTemp : nil
+    }
 
-        let services = servicesRef.takeRetainedValue() as? [CFTypeRef] ?? []
-        guard !services.isEmpty else { return nil }
+    // MARK: - SMC Communication
 
-        var cpuTemps: [Double] = []
-        var allTemps: [Double] = []
-        let fieldBase = kIOHIDEventTypeTemperature << 16
+    /// Reads key info (data type and size) for a given SMC key code.
+    private func readKeyInfo(keyCode: UInt32) -> (dataType: UInt32, dataSize: UInt32)? {
+        var input = SMCKeyData()
+        input.key = keyCode
+        input.data8 = smcCmdReadKeyInfo
 
-        for service in services {
-            guard let copyEvent = serviceCopyEvent,
-                  let getFloat = eventGetFloatValue,
-                  let eventRef = copyEvent(service, kIOHIDEventTypeTemperature, nil, 0)
-            else { continue }
+        var output = SMCKeyData()
+        var outputSize = MemoryLayout<SMCKeyData>.size
 
-            let event = eventRef.takeRetainedValue()
-            let temp = getFloat(event, fieldBase)
+        let result = IOConnectCallStructMethod(
+            connection, kernelIndexSMC,
+            &input, MemoryLayout<SMCKeyData>.size,
+            &output, &outputSize
+        )
+        guard result == kIOReturnSuccess else { return nil }
+        return (output.keyInfo.dataType, output.keyInfo.dataSize)
+    }
 
-            guard temp > 0 && temp < 150 else { continue }
-            allTemps.append(temp)
+    /// Reads the value bytes for a key and parses as a temperature.
+    private func readSMCValue(keyCode: UInt32, dataType: UInt32, dataSize: UInt32) -> Double? {
+        var input = SMCKeyData()
+        input.key = keyCode
+        input.keyInfo.dataSize = dataSize
+        input.data8 = smcCmdReadBytes
 
-            // Check if this is a CPU sensor by its Product name
-            if let copyProp = serviceCopyProperty,
-               let propRef = copyProp(service, "Product" as CFString) {
-                let name = propRef.takeRetainedValue() as? String ?? ""
-                if cpuSensorPrefixes.contains(where: { name.hasPrefix($0) }) {
-                    cpuTemps.append(temp)
+        var output = SMCKeyData()
+        var outputSize = MemoryLayout<SMCKeyData>.size
+
+        let result = IOConnectCallStructMethod(
+            connection, kernelIndexSMC,
+            &input, MemoryLayout<SMCKeyData>.size,
+            &output, &outputSize
+        )
+        guard result == kIOReturnSuccess else { return nil }
+
+        return parseTemperature(output: output, dataType: dataType, dataSize: dataSize)
+    }
+
+    // MARK: - Value Parsing
+
+    private func parseTemperature(output: SMCKeyData, dataType: UInt32, dataSize: UInt32) -> Double? {
+        let typeStr = fourCCString(dataType)
+
+        var bytes = output.bytes
+        return withUnsafePointer(to: &bytes) { ptr in
+            ptr.withMemoryRebound(to: UInt8.self, capacity: 32) { buf in
+                switch typeStr {
+                case "flt ":
+                    guard dataSize >= 4 else { return nil }
+                    #if arch(arm64)
+                    // Apple Silicon: SMC stores floats in native little-endian byte order
+                    var value: Float = 0
+                    memcpy(&value, buf, MemoryLayout<Float>.size)
+                    return Double(value)
+                    #else
+                    // Intel: SMC stores floats in big-endian byte order
+                    let raw = UInt32(buf[0]) << 24 | UInt32(buf[1]) << 16 |
+                              UInt32(buf[2]) << 8  | UInt32(buf[3])
+                    return Double(Float(bitPattern: raw))
+                    #endif
+
+                case "sp78":
+                    // Signed 7.8 fixed-point (2 bytes, big-endian)
+                    guard dataSize >= 2 else { return nil }
+                    let raw = Int16(Int16(buf[0]) << 8 | Int16(buf[1]))
+                    return Double(raw) / 256.0
+
+                case "sp87":
+                    // Signed 8.7 fixed-point (2 bytes, big-endian)
+                    guard dataSize >= 2 else { return nil }
+                    let raw = Int16(Int16(buf[0]) << 8 | Int16(buf[1]))
+                    return Double(raw) / 128.0
+
+                default:
+                    return nil
                 }
             }
         }
-
-        // Return max CPU temp (hottest core), or fall back to max of all sensors
-        if !cpuTemps.isEmpty {
-            return cpuTemps.max()
-        }
-        return allTemps.max()
     }
+
+    // MARK: - FourCC Helpers
+
+    /// Encodes a 4-character string as a big-endian UInt32 SMC key code.
+    private func fourCC(_ key: String) -> UInt32 {
+        let c = Array(key.utf8)
+        return UInt32(c[0]) << 24 | UInt32(c[1]) << 16 | UInt32(c[2]) << 8 | UInt32(c[3])
+    }
+
+    /// Decodes a UInt32 SMC key/type code back to a 4-character string.
+    private func fourCCString(_ code: UInt32) -> String {
+        let bytes: [UInt8] = [
+            UInt8((code >> 24) & 0xFF),
+            UInt8((code >> 16) & 0xFF),
+            UInt8((code >> 8) & 0xFF),
+            UInt8(code & 0xFF),
+        ]
+        return String(bytes: bytes, encoding: .ascii) ?? ""
+    }
+}
+
+// MARK: - SMC Kernel Data Structures
+
+/// Matches the kernel's SMCKeyData_t layout for IOConnectCallStructMethod calls.
+private struct SMCKeyData {
+    var key: UInt32 = 0
+    var vers = SMCVersion()
+    var pLimitData = SMCPLimitData()
+    var keyInfo = SMCKeyInfoData()
+    var result: UInt8 = 0
+    var status: UInt8 = 0
+    var data8: UInt8 = 0
+    var data32: UInt32 = 0
+    var bytes: (UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+                UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+                UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+                UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8) =
+        (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)
+}
+
+private struct SMCVersion {
+    var major: UInt8 = 0
+    var minor: UInt8 = 0
+    var build: UInt8 = 0
+    var reserved: UInt8 = 0
+    var release: UInt16 = 0
+}
+
+private struct SMCPLimitData {
+    var version: UInt16 = 0
+    var length: UInt16 = 0
+    var cpuPLimit: UInt32 = 0
+    var gpuPLimit: UInt32 = 0
+    var memPLimit: UInt32 = 0
+}
+
+private struct SMCKeyInfoData {
+    var dataSize: UInt32 = 0
+    var dataType: UInt32 = 0
+    var dataAttributes: UInt8 = 0
+    // C struct pads to 12 bytes (4-byte alignment); Swift only uses 9 without these.
+    private var _pad1: UInt8 = 0
+    private var _pad2: UInt8 = 0
+    private var _pad3: UInt8 = 0
 }
 
 // MARK: - CPU Usage Tracker
