@@ -7,16 +7,31 @@ final class SystemMetrics {
     private let temperatureReader = TemperatureReader()
     private let cpuUsageTracker = CPUUsageTracker()
     private let networkTracker = NetworkTracker()
+    private let softwareUpdateChecker = SoftwareUpdateChecker()
     private let cachedHardwareUUID: String
     private let cachedChipType: String
     private let cachedFileVault: Bool
     private let wifiInterfaceNames: Set<String>
+
+    /// Cached outdated apps from last async check
+    private var cachedOutdatedApps: [OutdatedApp] = []
 
     init() {
         cachedHardwareUUID = Self.readHardwareUUID()
         cachedChipType = Self.readChipType()
         cachedFileVault = Self.checkFileVault()
         wifiInterfaceNames = Set(CWWiFiClient.shared().interfaceNames() ?? [])
+
+        // Start background task to periodically update cached outdated apps
+        Task {
+            while true {
+                let apps = await softwareUpdateChecker.getOutdatedApps()
+                await MainActor.run {
+                    self.cachedOutdatedApps = apps
+                }
+                try? await Task.sleep(nanoseconds: 60_000_000_000) // Refresh cache every minute
+            }
+        }
     }
 
     // MARK: - Full Status Snapshot
@@ -33,7 +48,8 @@ final class SystemMetrics {
             chipType: cachedChipType,
             networks: networkInterfaces(),
             fileVaultEnabled: cachedFileVault,
-            agentVersion: AppVersion.current
+            agentVersion: AppVersion.current,
+            outdatedApps: cachedOutdatedApps.isEmpty ? nil : cachedOutdatedApps
         )
     }
 
@@ -233,6 +249,7 @@ final class TemperatureReader {
 
     private let smcCmdReadKeyInfo: UInt8 = 9
     private let smcCmdReadBytes: UInt8 = 5
+    private let smcCmdGetKeyFromIndex: UInt8 = 8
     private let kernelIndexSMC: UInt32 = 2
 
     /// Candidate CPU die temperature keys to probe at init.
@@ -275,6 +292,12 @@ final class TemperatureReader {
                   dataSize > 0,
                   Self.knownTempTypes.contains(fourCCString(dataType)) else { continue }
             sensorKeys.append((keyCode: keyCode, dataType: dataType, dataSize: dataSize))
+        }
+
+        // Fallback: if no static candidates matched (e.g. M1 uses different keys),
+        // enumerate all SMC keys and find temperature sensors dynamically.
+        if sensorKeys.isEmpty {
+            sensorKeys = discoverTemperatureKeys()
         }
     }
 
@@ -319,6 +342,70 @@ final class TemperatureReader {
         )
         guard result == kIOReturnSuccess else { return nil }
         return (output.keyInfo.dataType, output.keyInfo.dataSize)
+    }
+
+    /// Enumerates all SMC keys and returns those that look like CPU temperature sensors.
+    /// Scans for keys with "Tp" or "Tc" prefix and a recognized temperature data type.
+    private func discoverTemperatureKeys() -> [(keyCode: UInt32, dataType: UInt32, dataSize: UInt32)] {
+        // Read total key count from #KEY
+        let hashKeyCode = fourCC("#KEY")
+        guard let (_, countSize) = readKeyInfo(keyCode: hashKeyCode), countSize >= 4 else { return [] }
+
+        var countInput = SMCKeyData()
+        countInput.key = hashKeyCode
+        countInput.keyInfo.dataSize = countSize
+        countInput.data8 = smcCmdReadBytes
+
+        var countOutput = SMCKeyData()
+        var countOutputSize = MemoryLayout<SMCKeyData>.size
+
+        let countResult = IOConnectCallStructMethod(
+            connection, kernelIndexSMC,
+            &countInput, MemoryLayout<SMCKeyData>.size,
+            &countOutput, &countOutputSize
+        )
+        guard countResult == kIOReturnSuccess else { return [] }
+
+        var rawBytes = countOutput.bytes
+        let totalKeys = withUnsafePointer(to: &rawBytes) { ptr in
+            ptr.withMemoryRebound(to: UInt8.self, capacity: 4) { buf in
+                UInt32(buf[0]) << 24 | UInt32(buf[1]) << 16 | UInt32(buf[2]) << 8 | UInt32(buf[3])
+            }
+        }
+
+        var found: [(keyCode: UInt32, dataType: UInt32, dataSize: UInt32)] = []
+        let limit = min(totalKeys, 3000)
+
+        for i: UInt32 in 0..<limit {
+            var input = SMCKeyData()
+            input.data8 = smcCmdGetKeyFromIndex
+            input.data32 = i
+
+            var output = SMCKeyData()
+            var outputSize = MemoryLayout<SMCKeyData>.size
+
+            let result = IOConnectCallStructMethod(
+                connection, kernelIndexSMC,
+                &input, MemoryLayout<SMCKeyData>.size,
+                &output, &outputSize
+            )
+            guard result == kIOReturnSuccess else { continue }
+
+            let keyCode = output.key
+            let firstByte = UInt8((keyCode >> 24) & 0xFF)
+            let secondByte = UInt8((keyCode >> 16) & 0xFF)
+
+            // Filter for Tp (0x54 0x70) or Tc (0x54 0x63) prefixes
+            guard firstByte == 0x54, secondByte == 0x70 || secondByte == 0x63 else { continue }
+
+            guard let (dataType, dataSize) = readKeyInfo(keyCode: keyCode),
+                  dataSize > 0,
+                  Self.knownTempTypes.contains(fourCCString(dataType)) else { continue }
+
+            found.append((keyCode: keyCode, dataType: dataType, dataSize: dataSize))
+        }
+
+        return found
     }
 
     /// Reads the value bytes for a key and parses as a temperature.
@@ -451,41 +538,79 @@ private struct SMCKeyInfoData {
 // MARK: - CPU Usage Tracker
 
 final class CPUUsageTracker {
-    private var previousTicks: (user: UInt64, system: UInt64, idle: UInt64, nice: UInt64)?
+    /// Per-CPU ticks from the previous sample: [cpuIndex: (user, system, idle, nice)]
+    private var previousPerCPU: [Int: (user: UInt64, system: UInt64, idle: UInt64, nice: UInt64)] = [:]
+    private let logicalCPUCount: Int
+
+    init() {
+        logicalCPUCount = ProcessInfo.processInfo.activeProcessorCount
+    }
 
     /// Returns current CPU usage as a percentage (0–100).
+    /// Uses per-CPU stats so sleeping cores on Apple Silicon count as 0% rather
+    /// than being invisible (which inflates the aggregate when only E-cores are active).
     func currentUsage() -> Double {
-        var loadInfo = host_cpu_load_info_data_t()
-        var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info_data_t>.size / MemoryLayout<integer_t>.size)
+        var cpuCount: natural_t = 0
+        var cpuInfo: processor_info_array_t?
+        var cpuInfoCount: mach_msg_type_number_t = 0
 
-        let result = withUnsafeMutablePointer(to: &loadInfo) { ptr in
-            ptr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPtr in
-                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, intPtr, &count)
-            }
-        }
+        let result = host_processor_info(
+            mach_host_self(),
+            PROCESSOR_CPU_LOAD_INFO,
+            &cpuCount,
+            &cpuInfo,
+            &cpuInfoCount
+        )
 
-        guard result == KERN_SUCCESS else { return -1 }
-
-        let user = UInt64(loadInfo.cpu_ticks.0)    // CPU_STATE_USER
-        let system = UInt64(loadInfo.cpu_ticks.1)   // CPU_STATE_SYSTEM
-        let idle = UInt64(loadInfo.cpu_ticks.2)     // CPU_STATE_IDLE
-        let nice = UInt64(loadInfo.cpu_ticks.3)     // CPU_STATE_NICE
-
+        guard result == KERN_SUCCESS, let info = cpuInfo else { return -1 }
         defer {
-            previousTicks = (user, system, idle, nice)
+            vm_deallocate(mach_task_self_, vm_address_t(bitPattern: info), vm_size_t(cpuInfoCount) * vm_size_t(MemoryLayout<integer_t>.size))
         }
 
-        guard let prev = previousTicks else { return 0 }
+        let numCPUs = Int(cpuCount)
+        var currentPerCPU: [Int: (user: UInt64, system: UInt64, idle: UInt64, nice: UInt64)] = [:]
 
-        let dUser = user - prev.user
-        let dSystem = system - prev.system
-        let dIdle = idle - prev.idle
-        let dNice = nice - prev.nice
-        let total = dUser + dSystem + dIdle + dNice
+        var totalBusy: Double = 0
+        var totalCounted: Int = 0
 
-        guard total > 0 else { return 0 }
+        for i in 0..<numCPUs {
+            let base = Int(CPU_STATE_MAX) * i
+            let user = UInt64(info[base + Int(CPU_STATE_USER)])
+            let system = UInt64(info[base + Int(CPU_STATE_SYSTEM)])
+            let idle = UInt64(info[base + Int(CPU_STATE_IDLE)])
+            let nice = UInt64(info[base + Int(CPU_STATE_NICE)])
 
-        return Double(dUser + dSystem + dNice) / Double(total) * 100.0
+            currentPerCPU[i] = (user, system, idle, nice)
+
+            if let prev = previousPerCPU[i] {
+                let dUser = user - prev.user
+                let dSystem = system - prev.system
+                let dIdle = idle - prev.idle
+                let dNice = nice - prev.nice
+                let total = dUser + dSystem + dIdle + dNice
+
+                if total > 0 {
+                    totalBusy += Double(dUser + dSystem + dNice) / Double(total)
+                }
+                // Cores with zero delta (sleeping) contribute 0% to totalBusy
+            }
+            totalCounted += 1
+        }
+
+        previousPerCPU = currentPerCPU
+
+        // Use max of reported CPUs and known logical count to prevent inflation
+        let denominator = max(totalCounted, logicalCPUCount)
+        guard denominator > 0, !previousPerCPU.isEmpty else { return 0 }
+
+        // First call has no previous data
+        if totalCounted > 0 && previousPerCPU.count == numCPUs && totalBusy == 0 && previousPerCPU.count == currentPerCPU.count {
+            // Check if this is truly the first measurement
+            let hasPrevious = previousPerCPU.values.contains { $0.user > 0 || $0.system > 0 || $0.idle > 0 }
+            if !hasPrevious { return 0 }
+        }
+
+        return (totalBusy / Double(denominator)) * 100.0
     }
 }
 

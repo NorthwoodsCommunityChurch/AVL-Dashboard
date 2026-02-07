@@ -22,10 +22,13 @@ final class MachineViewModel: Identifiable {
     var lastSeen: Date
 
     var manualEndpoint: String?
+    var lastKnownIP: String?
     var isBonjourActive: Bool = false
 
     var isFlipped: Bool = false
     var consecutiveFailures: Int = 0
+    var widgetSlots: [WidgetSlot] = WidgetSlot.defaults
+    var outdatedApps: [OutdatedApp] = []
 
     var isManual: Bool { manualEndpoint != nil }
 
@@ -40,6 +43,8 @@ final class MachineViewModel: Identifiable {
         self.thresholds = identity.thresholds
         self.lastSeen = identity.lastSeen
         self.manualEndpoint = identity.manualEndpoint
+        self.lastKnownIP = identity.lastKnownIP
+        self.widgetSlots = identity.widgetSlots ?? WidgetSlot.defaults
     }
 
     init(from status: MachineStatus) {
@@ -61,9 +66,15 @@ final class MachineViewModel: Identifiable {
         networks = status.networks
         fileVaultEnabled = status.fileVaultEnabled
         agentVersion = status.agentVersion
+        outdatedApps = status.outdatedApps ?? []
         isOnline = true
         consecutiveFailures = 0
         lastSeen = Date()
+
+        // Track last known IP for fallback polling when Bonjour is unavailable
+        if let ip = status.networks.first?.ipAddress, !ip.isEmpty {
+            lastKnownIP = ip
+        }
     }
 
     func markPollFailure() {
@@ -80,6 +91,8 @@ final class MachineViewModel: Identifiable {
         identity.lastKnownHostname = hostname
         identity.lastSeen = lastSeen
         identity.manualEndpoint = manualEndpoint
+        identity.lastKnownIP = lastKnownIP
+        identity.widgetSlots = widgetSlots
         return identity
     }
 }

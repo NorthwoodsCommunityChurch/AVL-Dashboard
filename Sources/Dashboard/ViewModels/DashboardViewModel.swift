@@ -54,6 +54,9 @@ final class DashboardViewModel {
     /// Map of manual endpoint strings to known hardwareUUID.
     private var manualEndpointToUUID: [String: String] = [:]
 
+    /// Fallback polling tasks keyed by hardwareUUID (uses lastKnownIP when Bonjour is unavailable).
+    private var fallbackPollingTasks: [String: Task<Void, Never>] = [:]
+
     private var updateCheckTask: Task<Void, Never>?
 
     init() {
@@ -61,6 +64,7 @@ final class DashboardViewModel {
         setupDiscovery()
         discovery.startBrowsing()
         startManualEndpointPolling()
+        startFallbackPolling()
         startUpdateChecking()
     }
 
@@ -89,6 +93,8 @@ final class DashboardViewModel {
             manualPollingTasks.removeValue(forKey: endpoint)
             manualEndpointToUUID.removeValue(forKey: endpoint)
         }
+        fallbackPollingTasks[id]?.cancel()
+        fallbackPollingTasks.removeValue(forKey: id)
         machines.removeAll { $0.hardwareUUID == id }
         serviceToUUID = serviceToUUID.filter { $0.value != id }
         persist()
@@ -262,6 +268,76 @@ final class DashboardViewModel {
         return (host, port)
     }
 
+    // MARK: - Fallback IP Polling
+
+    /// Start polling machines via their last known IP when they have no manual endpoint.
+    /// Acts as a safety net when Bonjour/mDNS is unavailable on the network.
+    private func startFallbackPolling() {
+        for machine in machines {
+            guard machine.manualEndpoint == nil,
+                  let ip = machine.lastKnownIP, !ip.isEmpty else { continue }
+            startFallbackPolling(for: machine.hardwareUUID, ip: ip)
+        }
+    }
+
+    private func startFallbackPolling(for uuid: String, ip: String) {
+        fallbackPollingTasks[uuid]?.cancel()
+
+        let nwEndpoint = NWEndpoint.hostPort(
+            host: NWEndpoint.Host(ip),
+            port: NWEndpoint.Port(rawValue: BonjourConstants.defaultPort)!
+        )
+
+        fallbackPollingTasks[uuid] = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.pollFallbackOnce(uuid: uuid, endpoint: nwEndpoint)
+                try? await Task.sleep(for: .seconds(5))
+            }
+        }
+    }
+
+    private func pollFallbackOnce(uuid: String, endpoint: NWEndpoint) async {
+        do {
+            let status = try await polling.poll(endpoint: endpoint)
+            await MainActor.run {
+                self.handleFallbackPollSuccess(uuid: uuid, status: status)
+            }
+        } catch {
+            await MainActor.run {
+                self.handleFallbackPollFailure(uuid: uuid)
+            }
+        }
+    }
+
+    private func handleFallbackPollSuccess(uuid: String, status: MachineStatus) {
+        if let existing = machines.first(where: { $0.hardwareUUID == status.hardwareUUID }) {
+            // Only update if Bonjour isn't actively handling this machine
+            if !existing.isBonjourActive {
+                existing.update(from: status)
+            }
+        } else {
+            let machine = MachineViewModel(from: status)
+            machines.append(machine)
+        }
+
+        // If the IP changed, restart fallback polling with the new IP
+        if let newIP = status.networks.first?.ipAddress, !newIP.isEmpty {
+            if let machine = machines.first(where: { $0.hardwareUUID == status.hardwareUUID }),
+               machine.lastKnownIP != newIP {
+                startFallbackPolling(for: status.hardwareUUID, ip: newIP)
+            }
+        }
+
+        persist()
+    }
+
+    private func handleFallbackPollFailure(uuid: String) {
+        guard let machine = machines.first(where: { $0.hardwareUUID == uuid }) else { return }
+        if !machine.isBonjourActive && machine.manualEndpoint == nil {
+            machine.markPollFailure()
+        }
+    }
+
     // MARK: - Update Checking
 
     private func startUpdateChecking() {
@@ -380,8 +456,8 @@ final class DashboardViewModel {
             return activeEndpoints[serviceName]
         }
 
-        // Last resort: use primary network IP
-        if let ip = machine.primaryNetwork?.ipAddress {
+        // Try last known IP
+        if let ip = machine.lastKnownIP ?? machine.primaryNetwork?.ipAddress {
             return NWEndpoint.hostPort(
                 host: NWEndpoint.Host(ip),
                 port: NWEndpoint.Port(rawValue: BonjourConstants.defaultPort)!

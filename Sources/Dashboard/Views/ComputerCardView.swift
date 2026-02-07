@@ -3,11 +3,13 @@ import Shared
 
 /// Front face of a computer card showing live metrics.
 struct ComputerCardView: View {
-    let machine: MachineViewModel
+    @Bindable var machine: MachineViewModel
     let settings: DashboardSettings
     var needsUpdate: Bool = false
+    let onSave: () -> Void
     @Environment(\.openURL) private var openURL
     @State private var copiedNetwork: String?
+    @State private var showingSoftwareUpdates = false
 
     private var cpuColor: Color {
         let u = machine.cpuUsage
@@ -97,59 +99,85 @@ struct ComputerCardView: View {
             }
             .frame(height: 50)
 
-            // Metric tiles
-            metricTile {
-                Label(machine.uptimeSeconds.formattedUptime, systemImage: "clock")
-            }
+            // Metric tiles in scrollable area
+            ScrollView {
+                VStack(spacing: 4) {
+                    metricTile {
+                        Label(machine.uptimeSeconds.formattedUptime, systemImage: "clock")
+                    }
 
-            ForEach(machine.networks, id: \.interfaceName) { network in
-                Button {
-                    let text = "\(network.ipAddress)  \(network.macAddress)"
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
-                    copiedNetwork = network.interfaceName
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        if copiedNetwork == network.interfaceName {
-                            copiedNetwork = nil
+                    metricTile {
+                        HStack(spacing: 3) {
+                            Image(systemName: machine.fileVaultEnabled ? "lock.fill" : "lock.open")
+                                .font(.system(size: 9))
+                            Text(machine.fileVaultEnabled ? "FileVault" : "No FV")
                         }
+                        .foregroundStyle(machine.fileVaultEnabled ? Color.orange : Color.green)
                     }
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: copiedNetwork == network.interfaceName
-                              ? "checkmark.circle.fill"
-                              : (network.interfaceType == "Wi-Fi" ? "wifi" : "cable.connector.horizontal"))
-                            .font(.system(size: 9))
-                            .foregroundStyle(copiedNetwork == network.interfaceName ? Color.green : Color.secondary)
-                        Text("\(network.ipAddress) (\(network.interfaceType))")
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                        Text(network.macAddress)
-                            .font(.system(.caption2, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.5)
+
+                    // Software update status
+                    Button {
+                        showingSoftwareUpdates = true
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: machine.outdatedApps.isEmpty ? "checkmark.circle.fill" : "arrow.down.circle.fill")
+                                .font(.system(size: 9))
+                            Text(machine.outdatedApps.isEmpty ? "Apps Up to Date" : "\(machine.outdatedApps.count) Update\(machine.outdatedApps.count == 1 ? "" : "s") Available")
+                            Spacer(minLength: 0)
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(machine.outdatedApps.isEmpty ? Color.green : Color.orange)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.primary.opacity(0.04))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
                     }
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Color.primary.opacity(0.04))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-                }
-                .buttonStyle(.plain)
-                .help("Copy IP and MAC to clipboard")
-            }
+                    .buttonStyle(.plain)
 
-            metricTile {
-                HStack(spacing: 3) {
-                    Image(systemName: machine.fileVaultEnabled ? "lock.fill" : "lock.open")
-                        .font(.system(size: 9))
-                    Text(machine.fileVaultEnabled ? "FileVault" : "No FV")
+                    ForEach(machine.networks, id: \.interfaceName) { network in
+                        Button {
+                            let text = "\(network.ipAddress)  \(network.macAddress)"
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(text, forType: .string)
+                            copiedNetwork = network.interfaceName
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                if copiedNetwork == network.interfaceName {
+                                    copiedNetwork = nil
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: copiedNetwork == network.interfaceName
+                                      ? "checkmark.circle.fill"
+                                      : (network.interfaceType == "Wi-Fi" ? "wifi" : "cable.connector.horizontal"))
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(copiedNetwork == network.interfaceName ? Color.green : Color.secondary)
+                                Text("\(network.ipAddress) (\(network.interfaceType))")
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                                Text(network.macAddress)
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.5)
+                            }
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.primary.opacity(0.04))
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Copy IP and MAC to clipboard")
+                    }
                 }
-                .foregroundStyle(machine.fileVaultEnabled ? Color.orange : Color.green)
             }
+            .frame(height: 78)  // ~3 lines visible (26pt each)
+            .scrollIndicators(.hidden)
 
-            Spacer(minLength: 0)
+            // Widget slots
+            WidgetSlotRowView(slots: $machine.widgetSlots, onSave: onSave)
         }
         .padding(8)
         .frame(minWidth: 140, maxWidth: .infinity, maxHeight: .infinity)
@@ -168,6 +196,9 @@ struct ComputerCardView: View {
                     .background(Circle().fill(.thickMaterial).padding(1))
                     .offset(x: 4, y: -4)
             }
+        }
+        .sheet(isPresented: $showingSoftwareUpdates) {
+            SoftwareUpdateListView(machine: machine)
         }
     }
 

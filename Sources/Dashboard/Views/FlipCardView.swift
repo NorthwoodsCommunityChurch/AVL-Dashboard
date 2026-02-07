@@ -13,7 +13,7 @@ struct FlipCardView: View {
     var body: some View {
         ZStack {
             // Front face
-            ComputerCardView(machine: machine, settings: settings, needsUpdate: needsUpdate)
+            ComputerCardView(machine: machine, settings: settings, needsUpdate: needsUpdate, onSave: onSave)
                 .opacity(machine.isFlipped ? 0 : 1)
                 .rotation3DEffect(
                     .degrees(machine.isFlipped ? 180 : 0),
@@ -39,7 +39,7 @@ struct FlipCardView: View {
                 axis: (x: 0, y: 1, z: 0)
             )
         }
-        .frame(height: 175 + CGFloat(max(0, machine.networks.count - 1)) * 26)
+        .frame(height: 210)  // Fixed height for uniform tiles
         .onTapGesture {
             if !machine.isFlipped {
                 withAnimation(.spring(duration: 0.4)) {
