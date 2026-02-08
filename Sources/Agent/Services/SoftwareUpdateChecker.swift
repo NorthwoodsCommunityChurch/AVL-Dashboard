@@ -54,12 +54,7 @@ private struct KnownAVLApp {
             downloadURL: "https://www.blackmagicdesign.com/support/family/converter",
             apiSearchTerm: "Blackmagic Converters"
         ),
-        KnownAVLApp(
-            bundleIdentifier: "com.blackmagic-design.DiskSpeedTest",
-            name: "Blackmagic Disk Speed Test",
-            downloadURL: "https://www.blackmagicdesign.com/support/family/capture-and-playback",
-            apiSearchTerm: "Disk Speed Test"
-        ),
+        // Note: Blackmagic Disk Speed Test is a Mac App Store app - updates handled by macOS
         KnownAVLApp(
             bundleIdentifier: "com.blackmagic-design.BlackmagicProxyGeneratorLite",
             name: "Blackmagic Proxy Generator",

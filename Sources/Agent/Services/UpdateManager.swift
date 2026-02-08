@@ -10,6 +10,20 @@ final class UpdateManager {
 
     private init() {}
 
+    /// Escape a path for safe use in a bash double-quoted string.
+    /// Escapes: backslash, dollar sign, double quote, backtick, exclamation mark, newline.
+    private func shellEscape(_ path: String) -> String {
+        var escaped = path
+        // Order matters: escape backslash first, then other special chars
+        escaped = escaped.replacingOccurrences(of: "\\", with: "\\\\")
+        escaped = escaped.replacingOccurrences(of: "$", with: "\\$")
+        escaped = escaped.replacingOccurrences(of: "\"", with: "\\\"")
+        escaped = escaped.replacingOccurrences(of: "`", with: "\\`")
+        escaped = escaped.replacingOccurrences(of: "!", with: "\\!")
+        escaped = escaped.replacingOccurrences(of: "\n", with: "")
+        return escaped
+    }
+
     /// Process a received zip file: extract, locate .app, write trampoline, terminate.
     func applyUpdate(zipData: Data) throws {
         guard zipData.count <= maxUpdateSize else {
@@ -52,6 +66,11 @@ final class UpdateManager {
         let trampolinePath = tempDir.appendingPathComponent("trampoline.sh")
         let pid = ProcessInfo.processInfo.processIdentifier
 
+        // Escape all paths to prevent shell injection attacks
+        let escapedCurrentBundle = shellEscape(currentBundle)
+        let escapedAppBundle = shellEscape(appBundle.path)
+        let escapedTempDir = shellEscape(tempDir.path)
+
         let script = """
         #!/bin/bash
         # Wait for the agent process to exit
@@ -60,19 +79,19 @@ final class UpdateManager {
         done
 
         # Remove old app
-        rm -rf "\(currentBundle)"
+        rm -rf "\(escapedCurrentBundle)"
 
         # Move new app into place
-        mv "\(appBundle.path)" "\(currentBundle)"
+        mv "\(escapedAppBundle)" "\(escapedCurrentBundle)"
 
         # Re-sign ad hoc
-        /usr/bin/codesign --force --deep --sign - "\(currentBundle)" 2>/dev/null
+        /usr/bin/codesign --force --deep --sign - "\(escapedCurrentBundle)" 2>/dev/null
 
         # Relaunch
-        open "\(currentBundle)"
+        open "\(escapedCurrentBundle)"
 
         # Clean up temp directory
-        rm -rf "\(tempDir.path)"
+        rm -rf "\(escapedTempDir)"
         """
 
         try script.write(to: trampolinePath, atomically: true, encoding: .utf8)

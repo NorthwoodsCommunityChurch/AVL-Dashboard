@@ -55,7 +55,11 @@ public enum HTTPUtils {
         return response
     }
 
+    /// Maximum allowed Content-Length value (100 MB). Requests claiming larger bodies are rejected.
+    public static let maxContentLength = 100 * 1024 * 1024
+
     /// Parse Content-Length from raw HTTP request data.
+    /// Returns nil for missing, negative, or excessively large (> 100 MB) values.
     public static func parseContentLength(from data: Data) -> Int? {
         // Only convert the header portion — the body may contain binary data that isn't valid UTF-8.
         let separator = Data([0x0D, 0x0A, 0x0D, 0x0A]) // \r\n\r\n
@@ -66,7 +70,10 @@ public enum HTTPUtils {
         for line in str.split(separator: "\r\n") {
             if line.lowercased().hasPrefix("content-length:") {
                 let value = line.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)
-                return Int(value)
+                guard let length = Int(value) else { return nil }
+                // Reject negative or excessively large values
+                guard length >= 0, length <= maxContentLength else { return nil }
+                return length
             }
         }
         return nil
