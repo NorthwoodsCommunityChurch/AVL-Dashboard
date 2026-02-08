@@ -115,6 +115,12 @@ actor SoftwareUpdateChecker {
         return outdatedApps
     }
 
+    /// Forces an immediate update check (call from Dashboard via API)
+    func forceCheck() async {
+        print("[SoftwareUpdateChecker] Force check requested")
+        await performCheck()
+    }
+
     /// Starts the scheduler that runs checks at 3 AM daily
     private func startScheduler() {
         checkTask = Task {
@@ -329,27 +335,47 @@ actor SoftwareUpdateChecker {
 
     /// Checks ProPresenter for updates by scraping their download page
     private func checkProPresenterUpdate(knownApp: KnownAVLApp, installedVersion: String) async -> OutdatedApp? {
-        guard let url = URL(string: knownApp.downloadURL) else { return nil }
+        guard let url = URL(string: knownApp.downloadURL) else {
+            print("[SoftwareUpdateChecker] ProPresenter: Invalid download URL")
+            return nil
+        }
 
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
-            guard let html = String(data: data, encoding: .utf8) else { return nil }
+            guard let html = String(data: data, encoding: .utf8) else {
+                print("[SoftwareUpdateChecker] ProPresenter: Failed to decode HTML")
+                return OutdatedApp(
+                    bundleIdentifier: knownApp.bundleIdentifier,
+                    name: knownApp.name,
+                    installedVersion: installedVersion,
+                    latestVersion: "Check website",
+                    downloadURL: knownApp.downloadURL
+                )
+            }
 
-            // Look for Mac download URLs like: ProPresenter_21.2_352452646.zip
-            // Pattern: ProPresenter_(\d+\.\d+(?:\.\d+)?)_
-            let pattern = "ProPresenter_(\\d+\\.\\d+(?:\\.\\d+)?)_\\d+\\.zip"
+            // Look for Mac download URLs like: ProPresenter_21.2_352452646.zip or ProPresenter_21_352321578.zip
+            // Pattern allows optional decimals: 21, 21.2, or 21.2.1
+            let pattern = "ProPresenter_(\\d+(?:\\.\\d+(?:\\.\\d+)?)?)_\\d+\\.zip"
             guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
                   let match = regex.firstMatch(in: html, options: [], range: NSRange(html.startIndex..., in: html)),
                   let versionRange = Range(match.range(at: 1), in: html) else {
-                return nil
+                print("[SoftwareUpdateChecker] ProPresenter: Could not find version in download page")
+                return OutdatedApp(
+                    bundleIdentifier: knownApp.bundleIdentifier,
+                    name: knownApp.name,
+                    installedVersion: installedVersion,
+                    latestVersion: "Check website",
+                    downloadURL: knownApp.downloadURL
+                )
             }
 
             let latestVersion = String(html[versionRange])
+            print("[SoftwareUpdateChecker] ProPresenter: installed=\(installedVersion), latest=\(latestVersion)")
 
             // Compare versions
             if isVersion(installedVersion, lessThan: latestVersion) {
-                // Find the full download URL
-                let downloadPattern = "https://renewedvision\\.com/downloads//propresenter/mac/ProPresenter_\(latestVersion)_\\d+\\.zip"
+                // Find the full download URL (handle both single and double slash paths)
+                let downloadPattern = "https://renewedvision\\.com/downloads/?/propresenter/mac/ProPresenter_\(latestVersion)_\\d+\\.zip"
                 var downloadURL = knownApp.downloadURL
                 if let downloadRegex = try? NSRegularExpression(pattern: downloadPattern, options: []),
                    let downloadMatch = downloadRegex.firstMatch(in: html, options: [], range: NSRange(html.startIndex..., in: html)),
@@ -357,6 +383,7 @@ actor SoftwareUpdateChecker {
                     downloadURL = String(html[downloadRange])
                 }
 
+                print("[SoftwareUpdateChecker] ProPresenter: Update available! \(installedVersion) -> \(latestVersion)")
                 return OutdatedApp(
                     bundleIdentifier: knownApp.bundleIdentifier,
                     name: knownApp.name,
@@ -366,6 +393,7 @@ actor SoftwareUpdateChecker {
                 )
             }
 
+            print("[SoftwareUpdateChecker] ProPresenter: Up to date")
             // Up to date - return nil (don't show in list)
             return nil
         } catch {

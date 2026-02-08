@@ -118,6 +118,8 @@ final class MetricsServer: ObservableObject {
                 self.handleStatusRequest(connection: connection)
             } else if method == "POST" && path == BonjourConstants.updatePath {
                 self.handleUpdateRequest(connection: connection, initialData: data)
+            } else if method == "POST" && path == BonjourConstants.checkUpdatesPath {
+                self.handleCheckUpdatesRequest(connection: connection)
             } else {
                 let response = HTTPUtils.notFoundResponse()
                 connection.send(
@@ -151,6 +153,32 @@ final class MetricsServer: ObservableObject {
         DispatchQueue.main.async {
             self.lastPollTime = Date()
             self.dashboardConnected = true
+        }
+    }
+
+    // MARK: - Software Update Check
+
+    private func handleCheckUpdatesRequest(connection: NWConnection) {
+        Task {
+            await systemMetrics.forceUpdateCheck()
+            let status = systemMetrics.currentStatus()
+
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            guard let jsonData = try? encoder.encode(status) else {
+                let response = HTTPUtils.errorResponse(status: 500, message: "Failed to encode response")
+                connection.send(content: response, contentContext: .finalMessage, isComplete: true,
+                              completion: .contentProcessed { _ in connection.cancel() })
+                return
+            }
+
+            let response = HTTPUtils.jsonResponse(body: jsonData)
+            connection.send(
+                content: response,
+                contentContext: .finalMessage,
+                isComplete: true,
+                completion: .contentProcessed { _ in connection.cancel() }
+            )
         }
     }
 

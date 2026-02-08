@@ -16,6 +16,15 @@ final class SystemMetrics {
     /// Cached outdated apps from last async check
     private var cachedOutdatedApps: [OutdatedApp] = []
 
+    /// Forces an immediate software update check and refreshes the cache
+    func forceUpdateCheck() async {
+        await softwareUpdateChecker.forceCheck()
+        let apps = await softwareUpdateChecker.getOutdatedApps()
+        await MainActor.run {
+            self.cachedOutdatedApps = apps
+        }
+    }
+
     init() {
         cachedHardwareUUID = Self.readHardwareUUID()
         cachedChipType = Self.readChipType()
