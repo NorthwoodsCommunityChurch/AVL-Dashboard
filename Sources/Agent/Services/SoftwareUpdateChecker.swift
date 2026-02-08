@@ -19,6 +19,18 @@ private struct KnownAVLApp {
         ),
         // Blackmagic apps - use their JSON API
         KnownAVLApp(
+            bundleIdentifier: "com.blackmagic-design.DaVinciResolve",
+            name: "DaVinci Resolve",
+            downloadURL: "https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion",
+            apiSearchTerm: "DaVinci Resolve"
+        ),
+        KnownAVLApp(
+            bundleIdentifier: "com.blackmagic-design.DaVinciResolveStudio",
+            name: "DaVinci Resolve Studio",
+            downloadURL: "https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion",
+            apiSearchTerm: "DaVinci Resolve"
+        ),
+        KnownAVLApp(
             bundleIdentifier: "com.blackmagic-design.DesktopVideoSetup",
             name: "Blackmagic Desktop Video",
             downloadURL: "https://www.blackmagicdesign.com/support/family/capture-and-playback",
@@ -35,6 +47,48 @@ private struct KnownAVLApp {
             name: "Blackmagic HyperDeck",
             downloadURL: "https://www.blackmagicdesign.com/support/family/hyperdecks",
             apiSearchTerm: "HyperDeck"
+        ),
+        KnownAVLApp(
+            bundleIdentifier: "com.blackmagic-design.converters.utility",
+            name: "Blackmagic Converters",
+            downloadURL: "https://www.blackmagicdesign.com/support/family/converter",
+            apiSearchTerm: "Blackmagic Converters"
+        ),
+        KnownAVLApp(
+            bundleIdentifier: "com.blackmagic-design.DiskSpeedTest",
+            name: "Blackmagic Disk Speed Test",
+            downloadURL: "https://www.blackmagicdesign.com/support/family/capture-and-playback",
+            apiSearchTerm: "Disk Speed Test"
+        ),
+        KnownAVLApp(
+            bundleIdentifier: "com.blackmagic-design.BlackmagicProxyGeneratorLite",
+            name: "Blackmagic Proxy Generator",
+            downloadURL: "https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion",
+            apiSearchTerm: "Proxy Generator"
+        ),
+        KnownAVLApp(
+            bundleIdentifier: "com.blackmagic-design.SmartView",
+            name: "Blackmagic SmartView",
+            downloadURL: "https://www.blackmagicdesign.com/support/family/technical-video-products",
+            apiSearchTerm: "SmartView"
+        ),
+        KnownAVLApp(
+            bundleIdentifier: "com.blackmagic-design.Fusion",
+            name: "Fusion Studio",
+            downloadURL: "https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion",
+            apiSearchTerm: "Fusion"
+        ),
+        KnownAVLApp(
+            bundleIdentifier: "com.blackmagic-design.VideoAssist",
+            name: "Blackmagic Video Assist",
+            downloadURL: "https://www.blackmagicdesign.com/support/family/professional-cameras",
+            apiSearchTerm: "Video Assist"
+        ),
+        KnownAVLApp(
+            bundleIdentifier: "com.blackmagic-design.CameraSetup",
+            name: "Blackmagic Camera",
+            downloadURL: "https://www.blackmagicdesign.com/support/family/professional-cameras",
+            apiSearchTerm: "Blackmagic Camera"
         ),
     ]
 }
