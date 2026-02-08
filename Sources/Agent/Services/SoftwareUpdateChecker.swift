@@ -2,36 +2,39 @@ import Foundation
 import Shared
 
 /// Known AVL apps that don't use Sparkle but should be monitored.
-/// These will show with a "Check website" prompt since we can't auto-detect updates.
 private struct KnownAVLApp {
     let bundleIdentifier: String
     let name: String
     let downloadURL: String
+    /// If true, we can check for updates programmatically
+    let canCheckUpdates: Bool
 
     static let registry: [KnownAVLApp] = [
-        // ProPresenter 7 by Renewed Vision
+        // ProPresenter by Renewed Vision - we can scrape their download page
         KnownAVLApp(
             bundleIdentifier: "com.renewedvision.ProPresenter7",
             name: "ProPresenter",
-            downloadURL: "https://renewedvision.com/propresenter/download/"
+            downloadURL: "https://renewedvision.com/propresenter/download/",
+            canCheckUpdates: true
         ),
-        // Blackmagic Desktop Video
+        // Blackmagic apps - no programmatic update check available
         KnownAVLApp(
             bundleIdentifier: "com.blackmagic-design.DesktopVideoSetup",
             name: "Blackmagic Desktop Video",
-            downloadURL: "https://www.blackmagicdesign.com/support/family/capture-and-playback"
+            downloadURL: "https://www.blackmagicdesign.com/support/family/capture-and-playback",
+            canCheckUpdates: false
         ),
-        // Blackmagic ATEM Software Control
         KnownAVLApp(
             bundleIdentifier: "com.blackmagic-design.ATEMSoftwareControl",
             name: "ATEM Software Control",
-            downloadURL: "https://www.blackmagicdesign.com/support/family/atem-live-production-switchers"
+            downloadURL: "https://www.blackmagicdesign.com/support/family/atem-live-production-switchers",
+            canCheckUpdates: false
         ),
-        // Blackmagic HyperDeck
         KnownAVLApp(
             bundleIdentifier: "com.blackmagic-design.HyperDeckSetup",
             name: "Blackmagic HyperDeck",
-            downloadURL: "https://www.blackmagicdesign.com/support/family/hyperdecks"
+            downloadURL: "https://www.blackmagicdesign.com/support/family/hyperdecks",
+            canCheckUpdates: false
         ),
     ]
 }
@@ -121,8 +124,8 @@ actor SoftwareUpdateChecker {
             }
         }
 
-        // Check known AVL apps (manual update check required)
-        let knownApps = scanKnownAVLApps()
+        // Check known AVL apps
+        let knownApps = await scanKnownAVLApps()
         outdated.append(contentsOf: knownApps)
 
         self.outdatedApps = outdated
@@ -132,7 +135,7 @@ actor SoftwareUpdateChecker {
     }
 
     /// Scans /Applications for known AVL apps that don't use Sparkle
-    private func scanKnownAVLApps() -> [OutdatedApp] {
+    private func scanKnownAVLApps() async -> [OutdatedApp] {
         let fileManager = FileManager.default
         let applicationsPath = "/Applications"
 
@@ -156,21 +159,97 @@ actor SoftwareUpdateChecker {
 
             // Check if this app is in our known AVL apps registry
             if let knownApp = KnownAVLApp.registry.first(where: { $0.bundleIdentifier == bundleId }) {
-                let version = plist["CFBundleShortVersionString"] as? String
+                let installedVersion = plist["CFBundleShortVersionString"] as? String
                     ?? plist["CFBundleVersion"] as? String
                     ?? "Unknown"
 
-                results.append(OutdatedApp(
-                    bundleIdentifier: knownApp.bundleIdentifier,
-                    name: knownApp.name,
-                    installedVersion: version,
-                    latestVersion: "Check website",
-                    downloadURL: knownApp.downloadURL
-                ))
+                // Try to check for updates if supported
+                if knownApp.canCheckUpdates {
+                    if let outdatedApp = await checkKnownAppForUpdate(
+                        knownApp: knownApp,
+                        installedVersion: installedVersion
+                    ) {
+                        results.append(outdatedApp)
+                    }
+                    // If nil returned, app is up to date - don't add to list
+                } else {
+                    // Can't check updates - add as monitored app
+                    results.append(OutdatedApp(
+                        bundleIdentifier: knownApp.bundleIdentifier,
+                        name: knownApp.name,
+                        installedVersion: installedVersion,
+                        latestVersion: "Check website",
+                        downloadURL: knownApp.downloadURL
+                    ))
+                }
             }
         }
 
         return results
+    }
+
+    /// Checks a known AVL app for updates using app-specific methods
+    private func checkKnownAppForUpdate(knownApp: KnownAVLApp, installedVersion: String) async -> OutdatedApp? {
+        switch knownApp.bundleIdentifier {
+        case "com.renewedvision.ProPresenter7":
+            return await checkProPresenterUpdate(knownApp: knownApp, installedVersion: installedVersion)
+        default:
+            return nil
+        }
+    }
+
+    /// Checks ProPresenter for updates by scraping their download page
+    private func checkProPresenterUpdate(knownApp: KnownAVLApp, installedVersion: String) async -> OutdatedApp? {
+        guard let url = URL(string: knownApp.downloadURL) else { return nil }
+
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            guard let html = String(data: data, encoding: .utf8) else { return nil }
+
+            // Look for Mac download URLs like: ProPresenter_21.2_352452646.zip
+            // Pattern: ProPresenter_(\d+\.\d+(?:\.\d+)?)_
+            let pattern = "ProPresenter_(\\d+\\.\\d+(?:\\.\\d+)?)_\\d+\\.zip"
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
+                  let match = regex.firstMatch(in: html, options: [], range: NSRange(html.startIndex..., in: html)),
+                  let versionRange = Range(match.range(at: 1), in: html) else {
+                return nil
+            }
+
+            let latestVersion = String(html[versionRange])
+
+            // Compare versions
+            if isVersion(installedVersion, lessThan: latestVersion) {
+                // Find the full download URL
+                let downloadPattern = "https://renewedvision\\.com/downloads//propresenter/mac/ProPresenter_\(latestVersion)_\\d+\\.zip"
+                var downloadURL = knownApp.downloadURL
+                if let downloadRegex = try? NSRegularExpression(pattern: downloadPattern, options: []),
+                   let downloadMatch = downloadRegex.firstMatch(in: html, options: [], range: NSRange(html.startIndex..., in: html)),
+                   let downloadRange = Range(downloadMatch.range, in: html) {
+                    downloadURL = String(html[downloadRange])
+                }
+
+                return OutdatedApp(
+                    bundleIdentifier: knownApp.bundleIdentifier,
+                    name: knownApp.name,
+                    installedVersion: installedVersion,
+                    latestVersion: latestVersion,
+                    downloadURL: downloadURL
+                )
+            }
+
+            // Up to date - return nil (don't show in list)
+            return nil
+        } catch {
+            print("[SoftwareUpdateChecker] Failed to check ProPresenter updates: \(error)")
+            // On error, fall back to manual check
+            return OutdatedApp(
+                bundleIdentifier: knownApp.bundleIdentifier,
+                name: knownApp.name,
+                installedVersion: installedVersion,
+                latestVersion: "Check website",
+                downloadURL: knownApp.downloadURL
+            )
+        }
     }
 
     /// Scans /Applications for apps with Sparkle feed URLs
