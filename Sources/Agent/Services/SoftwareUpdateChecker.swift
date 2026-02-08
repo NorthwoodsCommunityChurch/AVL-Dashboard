@@ -6,35 +6,35 @@ private struct KnownAVLApp {
     let bundleIdentifier: String
     let name: String
     let downloadURL: String
-    /// If true, we can check for updates programmatically
-    let canCheckUpdates: Bool
+    /// Search term to find this app in API responses (e.g., "Desktop Video" for Blackmagic API)
+    let apiSearchTerm: String?
 
     static let registry: [KnownAVLApp] = [
-        // ProPresenter by Renewed Vision - we can scrape their download page
+        // ProPresenter by Renewed Vision - we scrape their download page
         KnownAVLApp(
             bundleIdentifier: "com.renewedvision.ProPresenter7",
             name: "ProPresenter",
             downloadURL: "https://renewedvision.com/propresenter/download/",
-            canCheckUpdates: true
+            apiSearchTerm: nil
         ),
-        // Blackmagic apps - no programmatic update check available
+        // Blackmagic apps - use their JSON API
         KnownAVLApp(
             bundleIdentifier: "com.blackmagic-design.DesktopVideoSetup",
             name: "Blackmagic Desktop Video",
             downloadURL: "https://www.blackmagicdesign.com/support/family/capture-and-playback",
-            canCheckUpdates: false
+            apiSearchTerm: "Desktop Video"
         ),
         KnownAVLApp(
             bundleIdentifier: "com.blackmagic-design.ATEMSoftwareControl",
             name: "ATEM Software Control",
             downloadURL: "https://www.blackmagicdesign.com/support/family/atem-live-production-switchers",
-            canCheckUpdates: false
+            apiSearchTerm: "ATEM Software Control"
         ),
         KnownAVLApp(
             bundleIdentifier: "com.blackmagic-design.HyperDeckSetup",
             name: "Blackmagic HyperDeck",
             downloadURL: "https://www.blackmagicdesign.com/support/family/hyperdecks",
-            canCheckUpdates: false
+            apiSearchTerm: "HyperDeck"
         ),
     ]
 }
@@ -46,6 +46,9 @@ actor SoftwareUpdateChecker {
     private var outdatedApps: [OutdatedApp] = []
     private var lastCheckDate: Date?
     private var checkTask: Task<Void, Never>?
+
+    /// Cached Blackmagic downloads data (to avoid multiple API calls)
+    private var blackmagicDownloads: [[String: Any]]?
 
     /// The hour to run the daily check (24-hour format)
     private let checkHour = 3
@@ -143,6 +146,9 @@ actor SoftwareUpdateChecker {
             return []
         }
 
+        // Pre-fetch Blackmagic API data (used for multiple apps)
+        await fetchBlackmagicDownloads()
+
         var results: [OutdatedApp] = []
 
         for item in contents {
@@ -163,29 +169,37 @@ actor SoftwareUpdateChecker {
                     ?? plist["CFBundleVersion"] as? String
                     ?? "Unknown"
 
-                // Try to check for updates if supported
-                if knownApp.canCheckUpdates {
-                    if let outdatedApp = await checkKnownAppForUpdate(
-                        knownApp: knownApp,
-                        installedVersion: installedVersion
-                    ) {
-                        results.append(outdatedApp)
-                    }
-                    // If nil returned, app is up to date - don't add to list
-                } else {
-                    // Can't check updates - add as monitored app
-                    results.append(OutdatedApp(
-                        bundleIdentifier: knownApp.bundleIdentifier,
-                        name: knownApp.name,
-                        installedVersion: installedVersion,
-                        latestVersion: "Check website",
-                        downloadURL: knownApp.downloadURL
-                    ))
+                // Try to check for updates
+                if let outdatedApp = await checkKnownAppForUpdate(
+                    knownApp: knownApp,
+                    installedVersion: installedVersion
+                ) {
+                    results.append(outdatedApp)
                 }
+                // If nil returned, app is up to date - don't add to list
             }
         }
 
+        // Clear cache after checking
+        blackmagicDownloads = nil
+
         return results
+    }
+
+    /// Fetches Blackmagic downloads JSON and caches it
+    private func fetchBlackmagicDownloads() async {
+        guard blackmagicDownloads == nil else { return }
+
+        let apiURL = URL(string: "https://www.blackmagicdesign.com/api/support/us/downloads.json")!
+        do {
+            let (data, _) = try await URLSession.shared.data(from: apiURL)
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let downloads = json["downloads"] as? [[String: Any]] {
+                blackmagicDownloads = downloads
+            }
+        } catch {
+            print("[SoftwareUpdateChecker] Failed to fetch Blackmagic downloads: \(error)")
+        }
     }
 
     /// Checks a known AVL app for updates using app-specific methods
@@ -193,9 +207,75 @@ actor SoftwareUpdateChecker {
         switch knownApp.bundleIdentifier {
         case "com.renewedvision.ProPresenter7":
             return await checkProPresenterUpdate(knownApp: knownApp, installedVersion: installedVersion)
+        case let id where id.starts(with: "com.blackmagic-design."):
+            return checkBlackmagicUpdate(knownApp: knownApp, installedVersion: installedVersion)
         default:
+            // Unknown app - show as monitored
+            return OutdatedApp(
+                bundleIdentifier: knownApp.bundleIdentifier,
+                name: knownApp.name,
+                installedVersion: installedVersion,
+                latestVersion: "Check website",
+                downloadURL: knownApp.downloadURL
+            )
+        }
+    }
+
+    /// Checks a Blackmagic app for updates using cached API data
+    private func checkBlackmagicUpdate(knownApp: KnownAVLApp, installedVersion: String) -> OutdatedApp? {
+        guard let searchTerm = knownApp.apiSearchTerm,
+              let downloads = blackmagicDownloads else {
+            // Can't check - return as monitored
+            return OutdatedApp(
+                bundleIdentifier: knownApp.bundleIdentifier,
+                name: knownApp.name,
+                installedVersion: installedVersion,
+                latestVersion: "Check website",
+                downloadURL: knownApp.downloadURL
+            )
+        }
+
+        // Find the latest version of this software
+        // Downloads are sorted by date (newest first) in the API
+        for download in downloads {
+            guard let name = download["name"] as? String,
+                  name.contains(searchTerm) else {
+                continue
+            }
+
+            // Extract version from name like "Desktop Video 15.3.1" or "ATEM Software Control 9.7"
+            let pattern = "\(searchTerm)\\s+(\\d+\\.\\d+(?:\\.\\d+)?)"
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+                  let match = regex.firstMatch(in: name, options: [], range: NSRange(name.startIndex..., in: name)),
+                  let versionRange = Range(match.range(at: 1), in: name) else {
+                continue
+            }
+
+            let latestVersion = String(name[versionRange])
+
+            // Compare versions
+            if isVersion(installedVersion, lessThan: latestVersion) {
+                return OutdatedApp(
+                    bundleIdentifier: knownApp.bundleIdentifier,
+                    name: knownApp.name,
+                    installedVersion: installedVersion,
+                    latestVersion: latestVersion,
+                    downloadURL: knownApp.downloadURL
+                )
+            }
+
+            // Found the app but it's up to date
             return nil
         }
+
+        // App not found in API - show as monitored
+        return OutdatedApp(
+            bundleIdentifier: knownApp.bundleIdentifier,
+            name: knownApp.name,
+            installedVersion: installedVersion,
+            latestVersion: "Check website",
+            downloadURL: knownApp.downloadURL
+        )
     }
 
     /// Checks ProPresenter for updates by scraping their download page
