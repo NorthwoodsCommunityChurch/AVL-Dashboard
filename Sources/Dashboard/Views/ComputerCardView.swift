@@ -36,6 +36,45 @@ struct ComputerCardView: View {
         return .green
     }
 
+    // App update status - distinguish between confirmed updates, monitored apps, and all up to date
+    private var confirmedUpdates: [OutdatedApp] {
+        machine.outdatedApps.filter { $0.latestVersion != "Check website" }
+    }
+
+    private var monitoredApps: [OutdatedApp] {
+        machine.outdatedApps.filter { $0.latestVersion == "Check website" }
+    }
+
+    private var appStatusIcon: String {
+        if !confirmedUpdates.isEmpty {
+            return "arrow.down.circle.fill"
+        } else if !monitoredApps.isEmpty {
+            return "eye.circle.fill"
+        } else {
+            return "checkmark.circle.fill"
+        }
+    }
+
+    private var appStatusText: String {
+        if !confirmedUpdates.isEmpty {
+            return "\(confirmedUpdates.count) Update\(confirmedUpdates.count == 1 ? "" : "s") Available"
+        } else if !monitoredApps.isEmpty {
+            return "\(monitoredApps.count) App\(monitoredApps.count == 1 ? "" : "s") Monitored"
+        } else {
+            return "Apps Up to Date"
+        }
+    }
+
+    private var appStatusColor: Color {
+        if !confirmedUpdates.isEmpty {
+            return .orange
+        } else if !monitoredApps.isEmpty {
+            return .blue
+        } else {
+            return .green
+        }
+    }
+
     var body: some View {
         VStack(spacing: 4) {
             // Machine name — tap to screen share
@@ -120,13 +159,13 @@ struct ComputerCardView: View {
                         showingSoftwareUpdates = true
                     } label: {
                         HStack(spacing: 3) {
-                            Image(systemName: machine.outdatedApps.isEmpty ? "checkmark.circle.fill" : "arrow.down.circle.fill")
+                            Image(systemName: appStatusIcon)
                                 .font(.system(size: 9))
-                            Text(machine.outdatedApps.isEmpty ? "Apps Up to Date" : "\(machine.outdatedApps.count) Update\(machine.outdatedApps.count == 1 ? "" : "s") Available")
+                            Text(appStatusText)
                             Spacer(minLength: 0)
                         }
                         .font(.caption2)
-                        .foregroundStyle(machine.outdatedApps.isEmpty ? Color.green : Color.orange)
+                        .foregroundStyle(appStatusColor)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(Color.primary.opacity(0.04))

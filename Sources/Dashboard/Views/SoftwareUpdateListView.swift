@@ -45,17 +45,38 @@ struct SoftwareUpdateListView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                // List of apps needing updates
+                // Split apps into confirmed updates vs manual check required
+                let confirmedUpdates = machine.outdatedApps.filter { $0.latestVersion != "Check website" }
+                let manualCheckApps = machine.outdatedApps.filter { $0.latestVersion == "Check website" }
+
                 List {
-                    Section {
-                        ForEach(machine.outdatedApps) { app in
-                            AppUpdateRow(app: app, status: .outdated)
+                    if !confirmedUpdates.isEmpty {
+                        Section {
+                            ForEach(confirmedUpdates) { app in
+                                AppUpdateRow(app: app, status: .outdated)
+                            }
+                        } header: {
+                            HStack {
+                                Image(systemName: "arrow.down.circle.fill")
+                                    .foregroundStyle(.orange)
+                                Text("\(confirmedUpdates.count) Update\(confirmedUpdates.count == 1 ? "" : "s") Available")
+                            }
                         }
-                    } header: {
-                        HStack {
-                            Image(systemName: "arrow.down.circle.fill")
-                                .foregroundStyle(.orange)
-                            Text("\(machine.outdatedApps.count) Update\(machine.outdatedApps.count == 1 ? "" : "s") Available")
+                    }
+
+                    if !manualCheckApps.isEmpty {
+                        Section {
+                            ForEach(manualCheckApps) { app in
+                                AppUpdateRow(app: app, status: .unknown)
+                            }
+                        } header: {
+                            HStack {
+                                Image(systemName: "eye.circle.fill")
+                                    .foregroundStyle(.blue)
+                                Text("\(manualCheckApps.count) Monitored App\(manualCheckApps.count == 1 ? "" : "s")")
+                            }
+                        } footer: {
+                            Text("These apps don't support automatic update checking. Click the link to check for updates manually.")
                         }
                     }
                 }
@@ -138,7 +159,7 @@ private struct AppUpdateRow: View {
                 Button {
                     openURL(url)
                 } label: {
-                    Label("Download", systemImage: "arrow.down.to.line")
+                    Label(status == .unknown ? "Check for Updates" : "Download", systemImage: status == .unknown ? "safari" : "arrow.down.to.line")
                         .font(.caption)
                 }
                 .buttonStyle(.bordered)

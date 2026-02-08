@@ -1,7 +1,43 @@
 import Foundation
 import Shared
 
+/// Known AVL apps that don't use Sparkle but should be monitored.
+/// These will show with a "Check website" prompt since we can't auto-detect updates.
+private struct KnownAVLApp {
+    let bundleIdentifier: String
+    let name: String
+    let downloadURL: String
+
+    static let registry: [KnownAVLApp] = [
+        // ProPresenter 7 by Renewed Vision
+        KnownAVLApp(
+            bundleIdentifier: "com.renewedvision.ProPresenter7",
+            name: "ProPresenter",
+            downloadURL: "https://renewedvision.com/propresenter/download/"
+        ),
+        // Blackmagic Desktop Video
+        KnownAVLApp(
+            bundleIdentifier: "com.blackmagic-design.DesktopVideoSetup",
+            name: "Blackmagic Desktop Video",
+            downloadURL: "https://www.blackmagicdesign.com/support/family/capture-and-playback"
+        ),
+        // Blackmagic ATEM Software Control
+        KnownAVLApp(
+            bundleIdentifier: "com.blackmagic-design.ATEMSoftwareControl",
+            name: "ATEM Software Control",
+            downloadURL: "https://www.blackmagicdesign.com/support/family/atem-live-production-switchers"
+        ),
+        // Blackmagic HyperDeck
+        KnownAVLApp(
+            bundleIdentifier: "com.blackmagic-design.HyperDeckSetup",
+            name: "Blackmagic HyperDeck",
+            downloadURL: "https://www.blackmagicdesign.com/support/family/hyperdecks"
+        ),
+    ]
+}
+
 /// Checks installed applications for available updates by querying Sparkle feeds.
+/// Also monitors known AVL apps that don't use Sparkle.
 /// Runs daily at 3 AM (or on first boot if missed).
 actor SoftwareUpdateChecker {
     private var outdatedApps: [OutdatedApp] = []
@@ -75,19 +111,66 @@ actor SoftwareUpdateChecker {
     private func performCheck() async {
         print("[SoftwareUpdateChecker] Starting daily update check...")
 
-        let apps = scanInstalledApps()
         var outdated: [OutdatedApp] = []
 
-        for app in apps {
+        // Check Sparkle-based apps
+        let sparkleApps = scanInstalledApps()
+        for app in sparkleApps {
             if let result = await checkForUpdate(app: app) {
                 outdated.append(result)
             }
         }
 
+        // Check known AVL apps (manual update check required)
+        let knownApps = scanKnownAVLApps()
+        outdated.append(contentsOf: knownApps)
+
         self.outdatedApps = outdated
         self.lastCheckDate = Date()
 
-        print("[SoftwareUpdateChecker] Check complete. Found \(outdated.count) outdated apps.")
+        print("[SoftwareUpdateChecker] Check complete. Found \(outdated.count) apps to monitor.")
+    }
+
+    /// Scans /Applications for known AVL apps that don't use Sparkle
+    private func scanKnownAVLApps() -> [OutdatedApp] {
+        let fileManager = FileManager.default
+        let applicationsPath = "/Applications"
+
+        guard let contents = try? fileManager.contentsOfDirectory(atPath: applicationsPath) else {
+            return []
+        }
+
+        var results: [OutdatedApp] = []
+
+        for item in contents {
+            guard item.hasSuffix(".app") else { continue }
+
+            let appPath = applicationsPath + "/" + item
+            let infoPlistPath = appPath + "/Contents/Info.plist"
+
+            guard let plistData = try? Data(contentsOf: URL(fileURLWithPath: infoPlistPath)),
+                  let plist = try? PropertyListSerialization.propertyList(from: plistData, format: nil) as? [String: Any],
+                  let bundleId = plist["CFBundleIdentifier"] as? String else {
+                continue
+            }
+
+            // Check if this app is in our known AVL apps registry
+            if let knownApp = KnownAVLApp.registry.first(where: { $0.bundleIdentifier == bundleId }) {
+                let version = plist["CFBundleShortVersionString"] as? String
+                    ?? plist["CFBundleVersion"] as? String
+                    ?? "Unknown"
+
+                results.append(OutdatedApp(
+                    bundleIdentifier: knownApp.bundleIdentifier,
+                    name: knownApp.name,
+                    installedVersion: version,
+                    latestVersion: "Check website",
+                    downloadURL: knownApp.downloadURL
+                ))
+            }
+        }
+
+        return results
     }
 
     /// Scans /Applications for apps with Sparkle feed URLs
