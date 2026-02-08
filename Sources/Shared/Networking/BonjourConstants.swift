@@ -5,7 +5,6 @@ public enum BonjourConstants {
     public static let serviceDomain = "local."
     public static let statusPath = "/status"
     public static let updatePath = "/update"
-    public static let checkUpdatesPath = "/check-updates"
     public static let defaultPort: UInt16 = 49990
     public static let portRetryCount: UInt16 = 10
 }

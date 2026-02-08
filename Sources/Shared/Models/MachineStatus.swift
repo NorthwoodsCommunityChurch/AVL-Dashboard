@@ -13,7 +13,6 @@ public struct MachineStatus: Codable, Sendable {
     public let networks: [NetworkInfo]
     public let fileVaultEnabled: Bool
     public let agentVersion: String?
-    public let outdatedApps: [OutdatedApp]?
 
     public init(
         hardwareUUID: String,
@@ -26,8 +25,7 @@ public struct MachineStatus: Codable, Sendable {
         chipType: String,
         networks: [NetworkInfo],
         fileVaultEnabled: Bool,
-        agentVersion: String? = nil,
-        outdatedApps: [OutdatedApp]? = nil
+        agentVersion: String? = nil
     ) {
         self.hardwareUUID = hardwareUUID
         self.hostname = hostname
@@ -40,14 +38,13 @@ public struct MachineStatus: Codable, Sendable {
         self.networks = networks
         self.fileVaultEnabled = fileVaultEnabled
         self.agentVersion = agentVersion
-        self.outdatedApps = outdatedApps
     }
 
     // Backward-compatible decoding: accepts either "networks" array or old "network" single object.
     private enum CodingKeys: String, CodingKey {
         case hardwareUUID, hostname, cpuTempCelsius, cpuUsagePercent,
              networkBytesPerSec, uptimeSeconds, osVersion, chipType,
-             networks, network, fileVaultEnabled, agentVersion, outdatedApps
+             networks, network, fileVaultEnabled, agentVersion
     }
 
     public init(from decoder: Decoder) throws {
@@ -71,8 +68,6 @@ public struct MachineStatus: Codable, Sendable {
         } else {
             networks = []
         }
-
-        outdatedApps = try c.decodeIfPresent([OutdatedApp].self, forKey: .outdatedApps)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -88,7 +83,6 @@ public struct MachineStatus: Codable, Sendable {
         try c.encode(networks, forKey: .networks)
         try c.encode(fileVaultEnabled, forKey: .fileVaultEnabled)
         try c.encodeIfPresent(agentVersion, forKey: .agentVersion)
-        try c.encodeIfPresent(outdatedApps, forKey: .outdatedApps)
     }
 }
 

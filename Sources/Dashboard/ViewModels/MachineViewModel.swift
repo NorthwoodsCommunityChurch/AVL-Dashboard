@@ -28,7 +28,6 @@ final class MachineViewModel: Identifiable {
     var isFlipped: Bool = false
     var consecutiveFailures: Int = 0
     var widgetSlots: [WidgetSlot] = WidgetSlot.defaults
-    var outdatedApps: [OutdatedApp] = []
 
     var isManual: Bool { manualEndpoint != nil }
 
@@ -66,7 +65,6 @@ final class MachineViewModel: Identifiable {
         networks = status.networks
         fileVaultEnabled = status.fileVaultEnabled
         agentVersion = status.agentVersion
-        outdatedApps = status.outdatedApps ?? []
         isOnline = true
         consecutiveFailures = 0
         lastSeen = Date()

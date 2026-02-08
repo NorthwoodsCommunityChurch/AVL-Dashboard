@@ -9,7 +9,6 @@ struct ComputerCardView: View {
     let onSave: () -> Void
     @Environment(\.openURL) private var openURL
     @State private var copiedNetwork: String?
-    @State private var showingSoftwareUpdates = false
 
     private var cpuColor: Color {
         let u = machine.cpuUsage
@@ -34,45 +33,6 @@ struct ComputerCardView: View {
         if t >= settings.tempThresholds.warning { return .orange }
         if t >= settings.tempThresholds.good { return .yellow }
         return .green
-    }
-
-    // App update status - distinguish between confirmed updates, monitored apps, and all up to date
-    private var confirmedUpdates: [OutdatedApp] {
-        machine.outdatedApps.filter { $0.latestVersion != "Check website" }
-    }
-
-    private var monitoredApps: [OutdatedApp] {
-        machine.outdatedApps.filter { $0.latestVersion == "Check website" }
-    }
-
-    private var appStatusIcon: String {
-        if !confirmedUpdates.isEmpty {
-            return "arrow.down.circle.fill"
-        } else if !monitoredApps.isEmpty {
-            return "eye.circle.fill"
-        } else {
-            return "checkmark.circle.fill"
-        }
-    }
-
-    private var appStatusText: String {
-        if !confirmedUpdates.isEmpty {
-            return "\(confirmedUpdates.count) Update\(confirmedUpdates.count == 1 ? "" : "s") Available"
-        } else if !monitoredApps.isEmpty {
-            return "\(monitoredApps.count) App\(monitoredApps.count == 1 ? "" : "s") Monitored"
-        } else {
-            return "Apps Up to Date"
-        }
-    }
-
-    private var appStatusColor: Color {
-        if !confirmedUpdates.isEmpty {
-            return .orange
-        } else if !monitoredApps.isEmpty {
-            return .blue
-        } else {
-            return .green
-        }
     }
 
     var body: some View {
@@ -154,25 +114,6 @@ struct ComputerCardView: View {
                         .foregroundStyle(machine.fileVaultEnabled ? Color.orange : Color.green)
                     }
 
-                    // Software update status
-                    Button {
-                        showingSoftwareUpdates = true
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: appStatusIcon)
-                                .font(.system(size: 9))
-                            Text(appStatusText)
-                            Spacer(minLength: 0)
-                        }
-                        .font(.caption2)
-                        .foregroundStyle(appStatusColor)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Color.primary.opacity(0.04))
-                        .clipShape(RoundedRectangle(cornerRadius: 5))
-                    }
-                    .buttonStyle(.plain)
-
                     ForEach(machine.networks, id: \.interfaceName) { network in
                         Button {
                             let text = "\(network.ipAddress)  \(network.macAddress)"
@@ -235,9 +176,6 @@ struct ComputerCardView: View {
                     .background(Circle().fill(.thickMaterial).padding(1))
                     .offset(x: 4, y: -4)
             }
-        }
-        .sheet(isPresented: $showingSoftwareUpdates) {
-            SoftwareUpdateListView(machine: machine)
         }
     }
 

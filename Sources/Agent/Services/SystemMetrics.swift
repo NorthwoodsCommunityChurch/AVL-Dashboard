@@ -7,40 +7,16 @@ final class SystemMetrics {
     private let temperatureReader = TemperatureReader()
     private let cpuUsageTracker = CPUUsageTracker()
     private let networkTracker = NetworkTracker()
-    private let softwareUpdateChecker = SoftwareUpdateChecker()
     private let cachedHardwareUUID: String
     private let cachedChipType: String
     private let cachedFileVault: Bool
     private let wifiInterfaceNames: Set<String>
-
-    /// Cached outdated apps from last async check
-    private var cachedOutdatedApps: [OutdatedApp] = []
-
-    /// Forces an immediate software update check and refreshes the cache
-    func forceUpdateCheck() async {
-        await softwareUpdateChecker.forceCheck()
-        let apps = await softwareUpdateChecker.getOutdatedApps()
-        await MainActor.run {
-            self.cachedOutdatedApps = apps
-        }
-    }
 
     init() {
         cachedHardwareUUID = Self.readHardwareUUID()
         cachedChipType = Self.readChipType()
         cachedFileVault = Self.checkFileVault()
         wifiInterfaceNames = Set(CWWiFiClient.shared().interfaceNames() ?? [])
-
-        // Start background task to periodically update cached outdated apps
-        Task {
-            while true {
-                let apps = await softwareUpdateChecker.getOutdatedApps()
-                await MainActor.run {
-                    self.cachedOutdatedApps = apps
-                }
-                try? await Task.sleep(nanoseconds: 60_000_000_000) // Refresh cache every minute
-            }
-        }
     }
 
     // MARK: - Full Status Snapshot
@@ -57,8 +33,7 @@ final class SystemMetrics {
             chipType: cachedChipType,
             networks: networkInterfaces(),
             fileVaultEnabled: cachedFileVault,
-            agentVersion: AppVersion.current,
-            outdatedApps: cachedOutdatedApps.isEmpty ? nil : cachedOutdatedApps
+            agentVersion: AppVersion.current
         )
     }
 
