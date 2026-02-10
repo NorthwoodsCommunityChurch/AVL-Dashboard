@@ -29,6 +29,6 @@
     <key>SUPublicEDKey</key>
     <string>VIMxKZmmRokdMcHK5d3QU4+qHgBglmkVFP5aAVvxgqM=</string>
     <key>SUFeedURL</key>
-    <string>https://northwoodscommunitychurch.github.io/app-updates/appcast.xml</string>
+    <string>https://northwoodscommunitychurch.github.io/app-updates/appcast-dashboard.xml</string>
 </dict>
 </plist>
