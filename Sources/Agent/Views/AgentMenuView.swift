@@ -1,10 +1,11 @@
 import SwiftUI
 import ServiceManagement
 import Shared
+import Sparkle
 
 struct AgentMenuView: View {
     @ObservedObject var server: MetricsServer
-    @ObservedObject var updateService: AgentUpdateService
+    let updater: SPUUpdater
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
@@ -31,26 +32,9 @@ struct AgentMenuView: View {
             Label("Agent v\(AppVersion.current)", systemImage: "app.badge")
                 .foregroundStyle(.secondary)
 
-            if updateService.isUpdating {
-                HStack(spacing: 4) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Updating...")
-                        .font(.caption)
-                }
+            Button("Check for Updates...") {
+                updater.checkForUpdates()
             }
-
-            if let error = updateService.lastError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .lineLimit(2)
-            }
-
-            Button("Check for Updates") {
-                Task { await updateService.forceCheck() }
-            }
-            .disabled(updateService.isUpdating)
 
             Divider()
 

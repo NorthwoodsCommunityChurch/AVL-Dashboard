@@ -1,17 +1,26 @@
 import SwiftUI
+import Sparkle
 
 @main
 struct AgentApp: App {
     @NSApplicationDelegateAdaptor(AgentAppDelegate.self) var delegate
     @StateObject private var server = MetricsServer()
-    @StateObject private var updateService = AgentUpdateService()
+    private let updaterController: SPUStandardUpdaterController
+
+    init() {
+        updaterController = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
+    }
 
     var body: some Scene {
         MenuBarExtra(
             "AVL Dashboard Agent",
             systemImage: "gauge.with.dots.needle.bottom.50percent"
         ) {
-            AgentMenuView(server: server, updateService: updateService)
+            AgentMenuView(server: server, updater: updaterController.updater)
         }
     }
 }

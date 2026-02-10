@@ -22,7 +22,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "Agent",
-            dependencies: ["Shared"],
+            dependencies: [
+                "Shared",
+                .product(name: "Sparkle", package: "Sparkle")
+            ],
             path: "Sources/Agent",
             linkerSettings: [
                 .linkedFramework("IOKit"),
