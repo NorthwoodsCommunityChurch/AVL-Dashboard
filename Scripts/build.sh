@@ -31,6 +31,9 @@ if [ ! -d "$SPARKLE_FRAMEWORK" ]; then
     exit 1
 fi
 
+# Clear extended attributes from source framework (OneDrive adds these)
+xattr -cr "$SPARKLE_FRAMEWORK"
+
 # --- Create Dashboard.app bundle ---
 echo "==> Bundling Dashboard.app..."
 DASH_APP="$BUILD_DIR/Dashboard.app"
@@ -45,6 +48,9 @@ cp "$RESOURCES_DIR/AppIcon.icns" "$DASH_CONTENTS/Resources/AppIcon.icns"
 
 # Copy Sparkle.framework
 cp -R "$SPARKLE_FRAMEWORK" "$DASH_CONTENTS/Frameworks/"
+
+# Add rpath so binary can find framework in Contents/Frameworks
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$DASH_CONTENTS/MacOS/Dashboard"
 
 # Inject version into Info.plist
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$DASH_CONTENTS/Info.plist"
@@ -76,6 +82,9 @@ cp "$RESOURCES_DIR/AppIcon.icns" "$AGENT_CONTENTS/Resources/AppIcon.icns"
 
 # Copy Sparkle.framework
 cp -R "$SPARKLE_FRAMEWORK" "$AGENT_CONTENTS/Frameworks/"
+
+# Add rpath so binary can find framework in Contents/Frameworks
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$AGENT_CONTENTS/MacOS/Agent"
 
 # Inject version into Info.plist
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$AGENT_CONTENTS/Info.plist"
