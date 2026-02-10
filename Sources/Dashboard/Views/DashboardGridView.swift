@@ -46,18 +46,12 @@ struct DashboardGridView: View {
             ToolbarItem(placement: .automatic) {
                 if viewModel.dashboardUpdateAvailable {
                     Button {
-                        Task { await viewModel.updateDashboard() }
+                        viewModel.updateDashboard()
                     } label: {
-                        if viewModel.isDownloadingDashboardUpdate {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Label("Install v\(viewModel.latestVersionString ?? "new")", systemImage: "arrow.down.circle.fill")
-                                .foregroundStyle(.orange)
-                        }
+                        Label("Update to v\(viewModel.latestVersionString ?? "new")", systemImage: "arrow.down.circle.fill")
+                            .foregroundStyle(.orange)
                     }
-                    .disabled(viewModel.isDownloadingDashboardUpdate)
-                    .help("Download and install the latest version")
+                    .help("Check for and install updates via Sparkle")
                 } else if viewModel.anyAgentNeedsUpdate {
                     Button {
                         Task { await viewModel.updateAllAgents() }

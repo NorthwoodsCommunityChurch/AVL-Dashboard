@@ -84,7 +84,15 @@ final class UpdateManager {
         # Move new app into place
         mv "\(escapedAppBundle)" "\(escapedCurrentBundle)"
 
-        # Re-sign ad hoc
+        # Re-sign ad hoc (Sparkle nested components must be signed inside-out)
+        SPARKLE="\(escapedCurrentBundle)/Contents/Frameworks/Sparkle.framework/Versions/B"
+        if [ -d "$SPARKLE" ]; then
+            /usr/bin/codesign --force --sign - "$SPARKLE/XPCServices/Installer.xpc" 2>/dev/null
+            /usr/bin/codesign --force --sign - "$SPARKLE/XPCServices/Downloader.xpc" 2>/dev/null
+            /usr/bin/codesign --force --sign - "$SPARKLE/Updater.app" 2>/dev/null
+            /usr/bin/codesign --force --sign - "$SPARKLE/Autoupdate" 2>/dev/null
+            /usr/bin/codesign --force --sign - "\(escapedCurrentBundle)/Contents/Frameworks/Sparkle.framework" 2>/dev/null
+        fi
         /usr/bin/codesign --force --deep --sign - "\(escapedCurrentBundle)" 2>/dev/null
 
         # Relaunch

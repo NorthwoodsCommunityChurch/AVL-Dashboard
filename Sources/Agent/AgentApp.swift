@@ -21,6 +21,10 @@ struct AgentApp: App {
             systemImage: "gauge.with.dots.needle.bottom.50percent"
         ) {
             AgentMenuView(server: server, updater: updaterController.updater)
+                .onAppear {
+                    // Give MetricsServer access to updater for remote update triggers
+                    server.updater = updaterController.updater
+                }
         }
     }
 }

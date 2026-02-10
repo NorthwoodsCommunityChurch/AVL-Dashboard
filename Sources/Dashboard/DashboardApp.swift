@@ -18,6 +18,10 @@ struct DashboardApp: App {
         WindowGroup {
             DashboardGridView(viewModel: viewModel)
                 .frame(minWidth: 400, minHeight: 300)
+                .onAppear {
+                    // Give ViewModel access to Sparkle for triggering updates
+                    viewModel.sparkleUpdater = updaterController.updater
+                }
         }
         .windowStyle(.titleBar)
         .defaultSize(width: 800, height: 600)

@@ -2,15 +2,13 @@ import Foundation
 import Network
 import Shared
 
-/// Checks GitHub for new releases and manages pushing updates to agents.
+/// Checks GitHub for new releases and triggers Sparkle updates on agents.
 final class UpdateService: @unchecked Sendable {
     private let owner = "NorthwoodsCommunityChurch"
     private let repo = "AVL-Dashboard"
-    private let polling = PollingService()
 
     private(set) var latestRelease: GitHubRelease?
     private(set) var latestVersion: SemanticVersion?
-    private var cachedAgentZipData: Data?
     private var lastCheck: Date?
 
     /// The current app version parsed as a SemanticVersion.
@@ -44,7 +42,6 @@ final class UpdateService: @unchecked Sendable {
             latestRelease = best?.0
             latestVersion = best?.1
             lastCheck = Date()
-            cachedAgentZipData = nil // invalidate cached zip on new check
         } catch {
             // Silently fail — network may be unavailable
         }
@@ -65,55 +62,9 @@ final class UpdateService: @unchecked Sendable {
         return latest > agentVer
     }
 
-    /// Download the agent zip from GitHub and POST it to an agent endpoint.
-    func pushUpdateToAgent(endpoint: NWEndpoint) async throws {
-        guard let release = latestRelease else {
-            throw UpdateError.noReleaseAvailable
-        }
-
-        let agentAsset = release.assets.first {
-            $0.name.lowercased().contains("agent") &&
-            !$0.name.lowercased().contains("windows") &&
-            $0.name.hasSuffix(".zip")
-        }
-        guard let asset = agentAsset else {
-            throw UpdateError.noAgentAssetFound
-        }
-
-        let zipData: Data
-        if let cached = cachedAgentZipData {
-            zipData = cached
-        } else {
-            zipData = try await downloadAsset(url: asset.browserDownloadUrl)
-            cachedAgentZipData = zipData
-        }
-
-        try await postUpdate(endpoint: endpoint, data: zipData)
-    }
-
-    /// Download the Dashboard zip from the latest GitHub release.
-    func downloadDashboardUpdate() async throws -> Data {
-        guard let release = latestRelease else {
-            throw UpdateError.noReleaseAvailable
-        }
-
-        let dashAsset = release.assets.first {
-            !$0.name.lowercased().contains("agent") && $0.name.hasSuffix(".zip")
-        }
-        guard let asset = dashAsset else {
-            throw UpdateError.noDashboardAssetFound
-        }
-
-        return try await downloadAsset(url: asset.browserDownloadUrl)
-    }
-
-    /// Download the agent zip from GitHub and POST it to a host:port endpoint.
-    func pushUpdateToAgent(host: String, port: UInt16) async throws {
-        let endpoint = NWEndpoint.hostPort(
-            host: NWEndpoint.Host(host),
-            port: NWEndpoint.Port(rawValue: port) ?? NWEndpoint.Port(rawValue: BonjourConstants.defaultPort)!
-        )
-        try await pushUpdateToAgent(endpoint: endpoint)
+    /// Trigger Sparkle update check on an agent by POSTing to /update endpoint.
+    func pushUpdateToAgent(endpoint: NWEndpoint, agentVersion: String?) async throws {
+        try await triggerSparkleUpdate(endpoint: endpoint)
     }
 
     // MARK: - GitHub API
@@ -132,28 +83,13 @@ final class UpdateService: @unchecked Sendable {
         return try JSONDecoder().decode([GitHubRelease].self, from: data)
     }
 
-    private func downloadAsset(url: String) async throws -> Data {
-        guard let assetURL = URL(string: url) else {
-            throw UpdateError.invalidAssetURL
-        }
+    // MARK: - Trigger Agent Update
 
-        var request = URLRequest(url: assetURL)
-        request.timeoutInterval = 120
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw UpdateError.downloadFailed
-        }
-
-        return data
-    }
-
-    // MARK: - Push Update to Agent
-
-    private func postUpdate(endpoint: NWEndpoint, data: Data) async throws {
+    /// Send a simple POST to /update to trigger Sparkle on the agent.
+    private func triggerSparkleUpdate(endpoint: NWEndpoint) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let connection = NWConnection(to: endpoint, using: .tcp)
-            let queue = DispatchQueue(label: "com.computerdash.update.post")
+            let queue = DispatchQueue(label: "com.computerdash.update.trigger")
             var completed = false
 
             let timeoutWork = DispatchWorkItem { [weak connection] in
@@ -162,18 +98,15 @@ final class UpdateService: @unchecked Sendable {
                 connection?.cancel()
                 continuation.resume(throwing: UpdateError.timeout)
             }
-            queue.asyncAfter(deadline: .now() + 30, execute: timeoutWork)
+            queue.asyncAfter(deadline: .now() + 10, execute: timeoutWork)
 
             connection.stateUpdateHandler = { state in
                 guard !completed else { return }
                 switch state {
                 case .ready:
-                    let request = HTTPUtils.postRequest(
-                        path: BonjourConstants.updatePath,
-                        body: data,
-                        contentType: "application/zip"
-                    )
-                    connection.send(content: request, completion: .contentProcessed { error in
+                    // Simple POST with empty body to trigger Sparkle
+                    let request = "POST \(BonjourConstants.updatePath) HTTP/1.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    connection.send(content: request.data(using: .utf8), completion: .contentProcessed { error in
                         guard !completed else { return }
                         if let error {
                             completed = true
@@ -184,7 +117,7 @@ final class UpdateService: @unchecked Sendable {
                         }
 
                         // Read response
-                        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { responseData, _, _, recvError in
+                        connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { responseData, _, _, recvError in
                             guard !completed else { return }
                             completed = true
                             timeoutWork.cancel()
@@ -233,11 +166,6 @@ final class UpdateService: @unchecked Sendable {
 }
 
 enum UpdateError: Error, LocalizedError {
-    case noReleaseAvailable
-    case noAgentAssetFound
-    case noDashboardAssetFound
-    case invalidAssetURL
-    case downloadFailed
     case githubAPIError
     case timeout
     case cancelled
@@ -245,11 +173,6 @@ enum UpdateError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .noReleaseAvailable: return "No release available on GitHub"
-        case .noAgentAssetFound: return "No agent zip found in release assets"
-        case .noDashboardAssetFound: return "No dashboard zip found in release assets"
-        case .invalidAssetURL: return "Invalid asset download URL"
-        case .downloadFailed: return "Failed to download update"
         case .githubAPIError: return "GitHub API request failed"
         case .timeout: return "Update request timed out"
         case .cancelled: return "Update cancelled"

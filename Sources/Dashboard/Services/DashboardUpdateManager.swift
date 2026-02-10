@@ -10,6 +10,18 @@ final class DashboardUpdateManager {
 
     private init() {}
 
+    /// Escape a path for safe use in a bash double-quoted string.
+    private func shellEscape(_ path: String) -> String {
+        var escaped = path
+        escaped = escaped.replacingOccurrences(of: "\\", with: "\\\\")
+        escaped = escaped.replacingOccurrences(of: "$", with: "\\$")
+        escaped = escaped.replacingOccurrences(of: "\"", with: "\\\"")
+        escaped = escaped.replacingOccurrences(of: "`", with: "\\`")
+        escaped = escaped.replacingOccurrences(of: "!", with: "\\!")
+        escaped = escaped.replacingOccurrences(of: "\n", with: "")
+        return escaped
+    }
+
     /// Process a downloaded zip file: extract, locate .app, write trampoline, terminate.
     func applyUpdate(zipData: Data) throws {
         guard zipData.count <= maxUpdateSize else {
@@ -52,6 +64,11 @@ final class DashboardUpdateManager {
         let trampolinePath = tempDir.appendingPathComponent("trampoline.sh")
         let pid = ProcessInfo.processInfo.processIdentifier
 
+        // Escape all paths to prevent shell injection
+        let escapedCurrentBundle = shellEscape(currentBundle)
+        let escapedAppBundle = shellEscape(appBundle.path)
+        let escapedTempDir = shellEscape(tempDir.path)
+
         let script = """
         #!/bin/bash
         # Wait for the dashboard process to exit
@@ -60,19 +77,27 @@ final class DashboardUpdateManager {
         done
 
         # Remove old app
-        rm -rf "\(currentBundle)"
+        rm -rf "\(escapedCurrentBundle)"
 
         # Move new app into place
-        mv "\(appBundle.path)" "\(currentBundle)"
+        mv "\(escapedAppBundle)" "\(escapedCurrentBundle)"
 
-        # Re-sign ad hoc
-        /usr/bin/codesign --force --deep --sign - "\(currentBundle)" 2>/dev/null
+        # Re-sign ad hoc (Sparkle nested components must be signed inside-out)
+        SPARKLE="\(escapedCurrentBundle)/Contents/Frameworks/Sparkle.framework/Versions/B"
+        if [ -d "$SPARKLE" ]; then
+            /usr/bin/codesign --force --sign - "$SPARKLE/XPCServices/Installer.xpc" 2>/dev/null
+            /usr/bin/codesign --force --sign - "$SPARKLE/XPCServices/Downloader.xpc" 2>/dev/null
+            /usr/bin/codesign --force --sign - "$SPARKLE/Updater.app" 2>/dev/null
+            /usr/bin/codesign --force --sign - "$SPARKLE/Autoupdate" 2>/dev/null
+            /usr/bin/codesign --force --sign - "\(escapedCurrentBundle)/Contents/Frameworks/Sparkle.framework" 2>/dev/null
+        fi
+        /usr/bin/codesign --force --deep --sign - "\(escapedCurrentBundle)" 2>/dev/null
 
         # Relaunch
-        open "\(currentBundle)"
+        open "\(escapedCurrentBundle)"
 
         # Clean up temp directory
-        rm -rf "\(tempDir.path)"
+        rm -rf "\(escapedTempDir)"
         """
 
         try script.write(to: trampolinePath, atomically: true, encoding: .utf8)

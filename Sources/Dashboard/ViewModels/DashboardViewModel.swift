@@ -2,6 +2,7 @@ import Foundation
 import Network
 import Observation
 import Shared
+import Sparkle
 
 @Observable
 final class DashboardViewModel {
@@ -19,12 +20,11 @@ final class DashboardViewModel {
     var isCheckingForUpdates: Bool = false
     /// The latest version string from GitHub (for display).
     var latestVersionString: String?
-    /// Whether we're currently downloading and applying a dashboard self-update.
-    var isDownloadingDashboardUpdate: Bool = false
-    /// Error message if dashboard self-update failed.
-    var dashboardUpdateError: String?
     /// Whether a batch "update all agents" operation is in progress.
     var isUpdatingAllAgents: Bool = false
+
+    /// Reference to Sparkle updater for triggering Dashboard updates
+    @ObservationIgnored var sparkleUpdater: SPUUpdater?
 
     var sortedMachines: [MachineViewModel] {
         switch sortOrder {
@@ -378,23 +378,9 @@ final class DashboardViewModel {
         }
     }
 
-    /// Download and apply a self-update to the Dashboard app.
-    func updateDashboard() async {
-        await MainActor.run {
-            self.isDownloadingDashboardUpdate = true
-            self.dashboardUpdateError = nil
-        }
-
-        do {
-            let zipData = try await updateService.downloadDashboardUpdate()
-            try DashboardUpdateManager.shared.applyUpdate(zipData: zipData)
-            // If we reach here, the app is about to terminate and relaunch
-        } catch {
-            await MainActor.run {
-                self.isDownloadingDashboardUpdate = false
-                self.dashboardUpdateError = error.localizedDescription
-            }
-        }
+    /// Trigger Sparkle to check for and install Dashboard updates.
+    func updateDashboard() {
+        sparkleUpdater?.checkForUpdates()
     }
 
     /// Whether a specific machine's agent needs updating.
@@ -426,13 +412,14 @@ final class DashboardViewModel {
     }
 
     /// Push an update to a specific agent. Uses the machine's known endpoint.
+    /// Automatically chooses between legacy zip push (old agents) or Sparkle trigger (new agents).
     func pushUpdate(to machine: MachineViewModel) async {
         guard let endpoint = resolveEndpoint(for: machine) else { return }
 
         await MainActor.run { machine.isUpdating = true; machine.updateError = nil }
 
         do {
-            try await updateService.pushUpdateToAgent(endpoint: endpoint)
+            try await updateService.pushUpdateToAgent(endpoint: endpoint, agentVersion: machine.agentVersion)
             await MainActor.run { machine.isUpdating = false }
         } catch {
             await MainActor.run {
