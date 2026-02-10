@@ -53,7 +53,11 @@ cp -R "$SPARKLE_FRAMEWORK" "$DASH_CONTENTS/Frameworks/"
 # Clear extended attributes (OneDrive adds these, breaks codesigning)
 xattr -cr "$DASH_APP"
 
-# Ad-hoc code sign (sign framework first, then app)
+# Ad-hoc code sign (sign Sparkle nested components inside-out, then app)
+codesign --force --sign - "$DASH_CONTENTS/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc"
+codesign --force --sign - "$DASH_CONTENTS/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc"
+codesign --force --sign - "$DASH_CONTENTS/Frameworks/Sparkle.framework/Versions/B/Updater.app"
+codesign --force --sign - "$DASH_CONTENTS/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
 codesign --force --sign - "$DASH_CONTENTS/Frameworks/Sparkle.framework"
 codesign --force --deep --sign - "$DASH_APP"
 echo "    Dashboard.app created at $DASH_APP"
@@ -80,7 +84,11 @@ cp -R "$SPARKLE_FRAMEWORK" "$AGENT_CONTENTS/Frameworks/"
 # Clear extended attributes (OneDrive adds these, breaks codesigning)
 xattr -cr "$AGENT_APP"
 
-# Ad-hoc code sign (sign framework first, then app)
+# Ad-hoc code sign (sign Sparkle nested components inside-out, then app)
+codesign --force --sign - "$AGENT_CONTENTS/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc"
+codesign --force --sign - "$AGENT_CONTENTS/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc"
+codesign --force --sign - "$AGENT_CONTENTS/Frameworks/Sparkle.framework/Versions/B/Updater.app"
+codesign --force --sign - "$AGENT_CONTENTS/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
 codesign --force --sign - "$AGENT_CONTENTS/Frameworks/Sparkle.framework"
 codesign --force --deep --sign - "$AGENT_APP"
 echo "    DashboardAgent.app created at $AGENT_APP"
