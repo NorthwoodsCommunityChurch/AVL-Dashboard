@@ -200,15 +200,24 @@ final class SystemMetrics {
         process.standardOutput = pipe
         process.standardError = Pipe()
 
+        // Use terminationHandler + DispatchSemaphore instead of waitUntilExit().
+        // waitUntilExit() spins the run loop, which allows SwiftUI to dispatch
+        // view graph updates while still inside @StateObject initialization.
+        // On macOS 26+, AG::precondition_failure aborts the process if the
+        // SwiftUI state graph is re-entered this way.
+        let sem = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in sem.signal() }
+
         do {
             try process.run()
-            process.waitUntilExit()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let output = String(data: data, encoding: .utf8) ?? ""
-            return output.contains("FileVault is On")
         } catch {
             return false
         }
+
+        _ = sem.wait(timeout: .now() + 5)
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        return output.contains("FileVault is On")
     }
 }
 

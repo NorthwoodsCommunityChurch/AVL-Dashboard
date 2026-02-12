@@ -117,8 +117,11 @@ echo "    DashboardAgent.exe created at $WINDOWS_EXE"
 
 # --- Create release archives ---
 echo "==> Creating release archives..."
-(cd "$BUILD_DIR" && zip -r "Dashboard-v${APP_VERSION}-aarch64.zip" Dashboard.app)
-(cd "$BUILD_DIR" && zip -r "DashboardAgent-v${APP_VERSION}-aarch64.zip" DashboardAgent.app)
+# Use ditto (not zip -r) to preserve symlinks inside Sparkle.framework.
+# zip -r follows symlinks and turns them into real files, which breaks
+# codesigning ("bundle format is ambiguous") when installed on other machines.
+(cd "$BUILD_DIR" && ditto -c -k --keepParent Dashboard.app "Dashboard-v${APP_VERSION}-aarch64.zip")
+(cd "$BUILD_DIR" && ditto -c -k --keepParent DashboardAgent.app "DashboardAgent-v${APP_VERSION}-aarch64.zip")
 (cd "$BUILD_DIR" && zip -j "DashboardAgent-v${APP_VERSION}-windows-amd64.zip" DashboardAgent.exe)
 
 echo ""
