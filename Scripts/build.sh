@@ -13,11 +13,24 @@ cd "$PROJECT_DIR"
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-# Build release binaries
-echo "==> Compiling with Swift Package Manager..."
-swift build -c release 2>&1
+# Build universal release binaries (arm64 + x86_64)
+# SPM multi-arch builds fail when multiple targets share a framework (Sparkle),
+# so build each arch separately and combine with lipo.
+echo "==> Compiling arm64..."
+swift build -c release --triple arm64-apple-macosx 2>&1
+ARM64_DIR="$(swift build -c release --triple arm64-apple-macosx --show-bin-path)"
 
-PRODUCTS_DIR="$(swift build -c release --show-bin-path)"
+echo "==> Compiling x86_64..."
+swift build -c release --triple x86_64-apple-macosx 2>&1
+X86_DIR="$(swift build -c release --triple x86_64-apple-macosx --show-bin-path)"
+
+echo "==> Creating universal binaries with lipo..."
+PRODUCTS_DIR="$BUILD_DIR/universal-bin"
+mkdir -p "$PRODUCTS_DIR"
+lipo -create "$ARM64_DIR/Dashboard" "$X86_DIR/Dashboard" -output "$PRODUCTS_DIR/Dashboard"
+lipo -create "$ARM64_DIR/Agent" "$X86_DIR/Agent" -output "$PRODUCTS_DIR/Agent"
+echo "    Dashboard: $(lipo -archs "$PRODUCTS_DIR/Dashboard")"
+echo "    Agent:     $(lipo -archs "$PRODUCTS_DIR/Agent")"
 
 # Extract version from Version.swift
 APP_VERSION=$(grep 'public static let current' "$PROJECT_DIR/Sources/Shared/Version.swift" | sed 's/.*"\(.*\)".*/\1/')
@@ -120,8 +133,8 @@ echo "==> Creating release archives..."
 # Use ditto (not zip -r) to preserve symlinks inside Sparkle.framework.
 # zip -r follows symlinks and turns them into real files, which breaks
 # codesigning ("bundle format is ambiguous") when installed on other machines.
-(cd "$BUILD_DIR" && ditto -c -k --keepParent Dashboard.app "Dashboard-v${APP_VERSION}-aarch64.zip")
-(cd "$BUILD_DIR" && ditto -c -k --keepParent DashboardAgent.app "DashboardAgent-v${APP_VERSION}-aarch64.zip")
+(cd "$BUILD_DIR" && ditto -c -k --keepParent Dashboard.app "Dashboard-v${APP_VERSION}-universal.zip")
+(cd "$BUILD_DIR" && ditto -c -k --keepParent DashboardAgent.app "DashboardAgent-v${APP_VERSION}-universal.zip")
 (cd "$BUILD_DIR" && zip -j "DashboardAgent-v${APP_VERSION}-windows-amd64.zip" DashboardAgent.exe)
 
 echo ""
