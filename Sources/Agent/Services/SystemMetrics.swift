@@ -681,6 +681,7 @@ final class GPUMetricsReader {
 
     private let smcCmdReadKeyInfo: UInt8 = 9
     private let smcCmdReadBytes: UInt8 = 5
+    private let smcCmdGetKeyFromIndex: UInt8 = 8
     private let kernelIndexSMC: UInt32 = 2
 
     /// Recognized SMC data type codes for temperature values.
@@ -710,8 +711,12 @@ final class GPUMetricsReader {
             IOServiceOpen(service, mach_task_self_, 0, &connection)
         }
 
+        // Discover GPU names first so we know how many GPUs to expect
+        discoverGPUNames()
+        let gpuCount = max(gpuNames.count, 1)
+
         if connection != 0 {
-            // Discover which GPU temperature keys exist
+            // Try static candidate keys first
             var seenIndices = Set<Int>()
             for candidate in Self.candidateKeys {
                 guard !seenIndices.contains(candidate.index) else { continue }
@@ -722,10 +727,13 @@ final class GPUMetricsReader {
                 gpuTempKeys.append((index: candidate.index, keyCode: keyCode, dataType: dataType, dataSize: dataSize))
                 seenIndices.insert(candidate.index)
             }
-        }
 
-        // Discover GPU names from IOAccelerator
-        discoverGPUNames()
+            // Fallback: if static keys didn't find temps for all GPUs,
+            // enumerate all SMC keys with "TG" prefix dynamically.
+            if gpuTempKeys.count < gpuCount {
+                gpuTempKeys = discoverGPUTemperatureKeys()
+            }
+        }
     }
 
     deinit {
@@ -767,6 +775,93 @@ final class GPUMetricsReader {
                 result[sensor.index] = temp
             }
         }
+        return result
+    }
+
+    /// Enumerates all SMC keys and returns those that look like GPU temperature sensors.
+    /// Groups by GPU index (3rd character digit) and picks one "best" key per GPU,
+    /// preferring die temperature keys (4th char 'D' or 'd').
+    private func discoverGPUTemperatureKeys() -> [(index: Int, keyCode: UInt32, dataType: UInt32, dataSize: UInt32)] {
+        // Read total key count from #KEY
+        let hashKeyCode = fourCC("#KEY")
+        guard let (_, countSize) = readKeyInfo(keyCode: hashKeyCode), countSize >= 4 else { return [] }
+
+        var countInput = SMCKeyData()
+        countInput.key = hashKeyCode
+        countInput.keyInfo.dataSize = countSize
+        countInput.data8 = smcCmdReadBytes
+
+        var countOutput = SMCKeyData()
+        var countOutputSize = MemoryLayout<SMCKeyData>.size
+
+        let countResult = IOConnectCallStructMethod(
+            connection, kernelIndexSMC,
+            &countInput, MemoryLayout<SMCKeyData>.size,
+            &countOutput, &countOutputSize
+        )
+        guard countResult == kIOReturnSuccess else { return [] }
+
+        var rawBytes = countOutput.bytes
+        let totalKeys = withUnsafePointer(to: &rawBytes) { ptr in
+            ptr.withMemoryRebound(to: UInt8.self, capacity: 4) { buf in
+                UInt32(buf[0]) << 24 | UInt32(buf[1]) << 16 | UInt32(buf[2]) << 8 | UInt32(buf[3])
+            }
+        }
+
+        // Collect all TG** keys that are valid temperature sensors
+        // Key format: T(0x54) G(0x47) <index-char> <type-char>
+        var allGPUKeys: [(keyCode: UInt32, dataType: UInt32, dataSize: UInt32, indexChar: UInt8, typeChar: UInt8)] = []
+        let limit = min(totalKeys, 3000)
+
+        for i: UInt32 in 0..<limit {
+            var input = SMCKeyData()
+            input.data8 = smcCmdGetKeyFromIndex
+            input.data32 = i
+
+            var output = SMCKeyData()
+            var outputSize = MemoryLayout<SMCKeyData>.size
+
+            let result = IOConnectCallStructMethod(
+                connection, kernelIndexSMC,
+                &input, MemoryLayout<SMCKeyData>.size,
+                &output, &outputSize
+            )
+            guard result == kIOReturnSuccess else { continue }
+
+            let keyCode = output.key
+            let byte1 = UInt8((keyCode >> 24) & 0xFF)  // 'T'
+            let byte2 = UInt8((keyCode >> 16) & 0xFF)  // 'G'
+            let byte3 = UInt8((keyCode >> 8) & 0xFF)   // index char
+            let byte4 = UInt8(keyCode & 0xFF)           // type char
+
+            // Filter for TG prefix (0x54 0x47)
+            guard byte1 == 0x54, byte2 == 0x47 else { continue }
+
+            guard let (dataType, dataSize) = readKeyInfo(keyCode: keyCode),
+                  dataSize > 0,
+                  Self.knownTempTypes.contains(fourCCString(dataType)) else { continue }
+
+            allGPUKeys.append((keyCode: keyCode, dataType: dataType, dataSize: dataSize, indexChar: byte3, typeChar: byte4))
+        }
+
+        // Group keys by the index character (3rd byte) and pick best per group.
+        // Prefer die temp keys: 'D', 'd', then anything else.
+        var groups: [UInt8: [(keyCode: UInt32, dataType: UInt32, dataSize: UInt32, typeChar: UInt8)]] = [:]
+        for key in allGPUKeys {
+            groups[key.indexChar, default: []].append((key.keyCode, key.dataType, key.dataSize, key.typeChar))
+        }
+
+        var result: [(index: Int, keyCode: UInt32, dataType: UInt32, dataSize: UInt32)] = []
+        for (_, keys) in groups.sorted(by: { $0.key < $1.key }) {
+            // Pick the best key: prefer 'D'/'d' (die), then 'T'/'t', then first available
+            let best = keys.first(where: { $0.typeChar == 0x44 || $0.typeChar == 0x64 })  // 'D' or 'd'
+                     ?? keys.first(where: { $0.typeChar == 0x54 || $0.typeChar == 0x74 })  // 'T' or 't'
+                     ?? keys.first
+            if let best {
+                result.append((index: result.count, keyCode: best.keyCode, dataType: best.dataType, dataSize: best.dataSize))
+            }
+        }
+
         return result
     }
 
