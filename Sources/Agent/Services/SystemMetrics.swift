@@ -744,12 +744,12 @@ final class GPUMetricsReader {
 
     /// Returns current GPU statuses (temperature + utilization) for all detected GPUs.
     func currentGPUStatuses() -> [GPUStatus] {
-        let temps = readGPUTemperatures()
-        let usage = readGPUUtilization()
+        let accelStats = readGPUAcceleratorStats()
+        let smcTemps = readGPUTemperatures()
 
         let maxIndex = max(
-            temps.keys.max() ?? -1,
-            usage.keys.max() ?? -1,
+            accelStats.keys.max() ?? -1,
+            smcTemps.keys.max() ?? -1,
             gpuNames.keys.max() ?? -1
         )
         guard maxIndex >= 0 else { return [] }
@@ -757,8 +757,9 @@ final class GPUMetricsReader {
         var statuses: [GPUStatus] = []
         for i in 0...maxIndex {
             let name = gpuNames[i] ?? "GPU \(i)"
-            let temp = temps[i] ?? -1
-            let util = usage[i] ?? -1
+            // Prefer IOAccelerator temperature (per-GPU), fall back to SMC
+            let temp = accelStats[i]?.temperature ?? smcTemps[i] ?? -1
+            let util = accelStats[i]?.utilization ?? -1
             statuses.append(GPUStatus(name: name, temperatureCelsius: temp, usagePercent: util))
         }
         return statuses
@@ -865,10 +866,16 @@ final class GPUMetricsReader {
         return result
     }
 
-    // MARK: - GPU Utilization via IOAccelerator
+    // MARK: - GPU Stats via IOAccelerator
 
-    private func readGPUUtilization() -> [Int: Double] {
-        var result: [Int: Double] = [:]
+    private struct AcceleratorStats {
+        var utilization: Double
+        var temperature: Double?
+    }
+
+    /// Reads utilization and temperature from IOAccelerator PerformanceStatistics in one pass.
+    private func readGPUAcceleratorStats() -> [Int: AcceleratorStats] {
+        var result: [Int: AcceleratorStats] = [:]
 
         var iterator: io_iterator_t = 0
         guard let matching = IOServiceMatching("IOAccelerator") else { return result }
@@ -890,13 +897,24 @@ final class GPUMetricsReader {
                 continue
             }
 
-            // Different AMD drivers use different key names
+            // Utilization — different AMD drivers use different key names
+            var util: Double = -1
             if let val = perfStats["Device Utilization %"] as? NSNumber {
-                result[gpuIndex] = val.doubleValue
+                util = val.doubleValue
             } else if let val = perfStats["GPU Activity(%)"] as? NSNumber {
-                result[gpuIndex] = val.doubleValue
+                util = val.doubleValue
             }
 
+            // Temperature from PerformanceStatistics (available on AMD GPUs)
+            var temp: Double?
+            if let val = perfStats["Temperature(C)"] as? NSNumber {
+                let t = val.doubleValue
+                if t > 0, t < 150 {
+                    temp = t
+                }
+            }
+
+            result[gpuIndex] = AcceleratorStats(utilization: util, temperature: temp)
             gpuIndex += 1
         }
 
