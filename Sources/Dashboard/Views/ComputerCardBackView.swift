@@ -71,6 +71,19 @@ struct ComputerCardBackView: View {
                     .lineLimit(2)
             }
 
+            // GPU toggle (only show if agent has reported GPU data)
+            if machine.hasGPUCapability {
+                HStack(spacing: 4) {
+                    Image(systemName: "square.3.layers.3d")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                    Toggle("Show GPUs", isOn: $machine.showGPUs)
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .font(.caption2)
+                }
+            }
+
             Spacer(minLength: 0)
 
             // Action buttons

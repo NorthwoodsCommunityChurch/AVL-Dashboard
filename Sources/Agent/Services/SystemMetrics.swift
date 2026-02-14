@@ -7,6 +7,7 @@ final class SystemMetrics {
     private let temperatureReader = TemperatureReader()
     private let cpuUsageTracker = CPUUsageTracker()
     private let networkTracker = NetworkTracker()
+    private let gpuReader = GPUMetricsReader()
     private let cachedHardwareUUID: String
     private let cachedChipType: String
     private let cachedFileVault: Bool
@@ -22,7 +23,8 @@ final class SystemMetrics {
     // MARK: - Full Status Snapshot
 
     func currentStatus() -> MachineStatus {
-        MachineStatus(
+        let gpuStatuses = gpuReader.currentGPUStatuses()
+        return MachineStatus(
             hardwareUUID: cachedHardwareUUID,
             hostname: ProcessInfo.processInfo.hostName,
             cpuTempCelsius: temperatureReader.readCPUTemperature() ?? -1,
@@ -33,7 +35,8 @@ final class SystemMetrics {
             chipType: cachedChipType,
             networks: networkInterfaces(),
             fileVaultEnabled: cachedFileVault,
-            agentVersion: AppVersion.current
+            agentVersion: AppVersion.current,
+            gpus: gpuStatuses.isEmpty ? nil : gpuStatuses
         )
     }
 
@@ -659,5 +662,269 @@ final class NetworkTracker {
         }
 
         return total
+    }
+}
+
+// MARK: - GPU Metrics Reader (AMD discrete GPUs)
+//
+// Reads GPU temperature from SMC keys (TG0D, TG1D, TG2D for AMD GPUs in Mac Pro)
+// and GPU utilization from IOAccelerator PerformanceStatistics.
+
+final class GPUMetricsReader {
+    private var connection: io_connect_t = 0
+
+    /// Discovered GPU temperature keys, ordered by GPU index.
+    private var gpuTempKeys: [(index: Int, keyCode: UInt32, dataType: UInt32, dataSize: UInt32)] = []
+
+    /// GPU names from IOAccelerator, keyed by index.
+    private var gpuNames: [Int: String] = [:]
+
+    private let smcCmdReadKeyInfo: UInt8 = 9
+    private let smcCmdReadBytes: UInt8 = 5
+    private let kernelIndexSMC: UInt32 = 2
+
+    /// Recognized SMC data type codes for temperature values.
+    private static let knownTempTypes: Set<String> = ["flt ", "sp78", "sp87"]
+
+    /// Candidate GPU die temperature keys. TG{n}D = GPU n die temperature.
+    private static let candidateKeys: [(index: Int, name: String)] = [
+        (0, "TG0D"), (1, "TG1D"), (2, "TG2D"), (3, "TG3D"),
+        // Alternative keys used by some AMD GPUs
+        (0, "TG0T"), (1, "TG1T"), (2, "TG2T"), (3, "TG3T"),
+    ]
+
+    init() {
+        // Open SMC connection (same pattern as TemperatureReader)
+        var service = IOServiceGetMatchingService(
+            kIOMainPortDefault,
+            IOServiceMatching("AppleSMCKeysEndpoint")
+        )
+        if service == 0 {
+            service = IOServiceGetMatchingService(
+                kIOMainPortDefault,
+                IOServiceMatching("AppleSMC")
+            )
+        }
+        if service != 0 {
+            defer { IOObjectRelease(service) }
+            IOServiceOpen(service, mach_task_self_, 0, &connection)
+        }
+
+        if connection != 0 {
+            // Discover which GPU temperature keys exist
+            var seenIndices = Set<Int>()
+            for candidate in Self.candidateKeys {
+                guard !seenIndices.contains(candidate.index) else { continue }
+                let keyCode = fourCC(candidate.name)
+                guard let (dataType, dataSize) = readKeyInfo(keyCode: keyCode),
+                      dataSize > 0,
+                      Self.knownTempTypes.contains(fourCCString(dataType)) else { continue }
+                gpuTempKeys.append((index: candidate.index, keyCode: keyCode, dataType: dataType, dataSize: dataSize))
+                seenIndices.insert(candidate.index)
+            }
+        }
+
+        // Discover GPU names from IOAccelerator
+        discoverGPUNames()
+    }
+
+    deinit {
+        if connection != 0 {
+            IOServiceClose(connection)
+        }
+    }
+
+    /// Returns current GPU statuses (temperature + utilization) for all detected GPUs.
+    func currentGPUStatuses() -> [GPUStatus] {
+        let temps = readGPUTemperatures()
+        let usage = readGPUUtilization()
+
+        let maxIndex = max(
+            temps.keys.max() ?? -1,
+            usage.keys.max() ?? -1,
+            gpuNames.keys.max() ?? -1
+        )
+        guard maxIndex >= 0 else { return [] }
+
+        var statuses: [GPUStatus] = []
+        for i in 0...maxIndex {
+            let name = gpuNames[i] ?? "GPU \(i)"
+            let temp = temps[i] ?? -1
+            let util = usage[i] ?? -1
+            statuses.append(GPUStatus(name: name, temperatureCelsius: temp, usagePercent: util))
+        }
+        return statuses
+    }
+
+    // MARK: - GPU Temperature via SMC
+
+    private func readGPUTemperatures() -> [Int: Double] {
+        guard connection != 0 else { return [:] }
+        var result: [Int: Double] = [:]
+        for sensor in gpuTempKeys {
+            if let temp = readSMCValue(keyCode: sensor.keyCode, dataType: sensor.dataType, dataSize: sensor.dataSize),
+               temp > 0, temp < 150 {
+                result[sensor.index] = temp
+            }
+        }
+        return result
+    }
+
+    // MARK: - GPU Utilization via IOAccelerator
+
+    private func readGPUUtilization() -> [Int: Double] {
+        var result: [Int: Double] = [:]
+
+        var iterator: io_iterator_t = 0
+        guard let matching = IOServiceMatching("IOAccelerator") else { return result }
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iterator) == kIOReturnSuccess else {
+            return result
+        }
+        defer { IOObjectRelease(iterator) }
+
+        var gpuIndex = 0
+        var service = IOIteratorNext(iterator)
+        while service != 0 {
+            defer { IOObjectRelease(service); service = IOIteratorNext(iterator) }
+
+            var props: Unmanaged<CFMutableDictionary>?
+            guard IORegistryEntryCreateCFProperties(service, &props, kCFAllocatorDefault, 0) == kIOReturnSuccess,
+                  let dict = props?.takeRetainedValue() as? [String: Any],
+                  let perfStats = dict["PerformanceStatistics"] as? [String: Any] else {
+                gpuIndex += 1
+                continue
+            }
+
+            // Different AMD drivers use different key names
+            if let val = perfStats["Device Utilization %"] as? NSNumber {
+                result[gpuIndex] = val.doubleValue
+            } else if let val = perfStats["GPU Activity(%)"] as? NSNumber {
+                result[gpuIndex] = val.doubleValue
+            }
+
+            gpuIndex += 1
+        }
+
+        return result
+    }
+
+    /// Discover GPU names from IOAccelerator IORegistry entries.
+    private func discoverGPUNames() {
+        var iterator: io_iterator_t = 0
+        guard let matching = IOServiceMatching("IOAccelerator") else { return }
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iterator) == kIOReturnSuccess else {
+            return
+        }
+        defer { IOObjectRelease(iterator) }
+
+        var gpuIndex = 0
+        var service = IOIteratorNext(iterator)
+        while service != 0 {
+            defer { IOObjectRelease(service); service = IOIteratorNext(iterator) }
+
+            // Walk up to parent IOPCIDevice to get the model name
+            var parent: io_object_t = 0
+            if IORegistryEntryGetParentEntry(service, kIOServicePlane, &parent) == kIOReturnSuccess {
+                defer { IOObjectRelease(parent) }
+                if let modelProp = IORegistryEntryCreateCFProperty(parent, "model" as CFString, kCFAllocatorDefault, 0) {
+                    if let modelData = modelProp.takeRetainedValue() as? Data {
+                        let name = String(data: modelData, encoding: .utf8)?
+                            .trimmingCharacters(in: .controlCharacters) ?? "GPU \(gpuIndex)"
+                        gpuNames[gpuIndex] = name
+                    }
+                }
+            }
+
+            gpuIndex += 1
+        }
+    }
+
+    // MARK: - SMC Communication (same pattern as TemperatureReader)
+
+    private func readKeyInfo(keyCode: UInt32) -> (dataType: UInt32, dataSize: UInt32)? {
+        var input = SMCKeyData()
+        input.key = keyCode
+        input.data8 = smcCmdReadKeyInfo
+
+        var output = SMCKeyData()
+        var outputSize = MemoryLayout<SMCKeyData>.size
+
+        let result = IOConnectCallStructMethod(
+            connection, kernelIndexSMC,
+            &input, MemoryLayout<SMCKeyData>.size,
+            &output, &outputSize
+        )
+        guard result == kIOReturnSuccess else { return nil }
+        return (output.keyInfo.dataType, output.keyInfo.dataSize)
+    }
+
+    private func readSMCValue(keyCode: UInt32, dataType: UInt32, dataSize: UInt32) -> Double? {
+        var input = SMCKeyData()
+        input.key = keyCode
+        input.keyInfo.dataSize = dataSize
+        input.data8 = smcCmdReadBytes
+
+        var output = SMCKeyData()
+        var outputSize = MemoryLayout<SMCKeyData>.size
+
+        let result = IOConnectCallStructMethod(
+            connection, kernelIndexSMC,
+            &input, MemoryLayout<SMCKeyData>.size,
+            &output, &outputSize
+        )
+        guard result == kIOReturnSuccess else { return nil }
+
+        return parseTemperature(output: output, dataType: dataType, dataSize: dataSize)
+    }
+
+    private func parseTemperature(output: SMCKeyData, dataType: UInt32, dataSize: UInt32) -> Double? {
+        let typeStr = fourCCString(dataType)
+
+        var bytes = output.bytes
+        return withUnsafePointer(to: &bytes) { ptr in
+            ptr.withMemoryRebound(to: UInt8.self, capacity: 32) { buf in
+                switch typeStr {
+                case "flt ":
+                    guard dataSize >= 4 else { return nil }
+                    #if arch(arm64)
+                    var value: Float = 0
+                    memcpy(&value, buf, MemoryLayout<Float>.size)
+                    return Double(value)
+                    #else
+                    let raw = UInt32(buf[0]) << 24 | UInt32(buf[1]) << 16 |
+                              UInt32(buf[2]) << 8  | UInt32(buf[3])
+                    return Double(Float(bitPattern: raw))
+                    #endif
+
+                case "sp78":
+                    guard dataSize >= 2 else { return nil }
+                    let raw = Int16(Int16(buf[0]) << 8 | Int16(buf[1]))
+                    return Double(raw) / 256.0
+
+                case "sp87":
+                    guard dataSize >= 2 else { return nil }
+                    let raw = Int16(Int16(buf[0]) << 8 | Int16(buf[1]))
+                    return Double(raw) / 128.0
+
+                default:
+                    return nil
+                }
+            }
+        }
+    }
+
+    private func fourCC(_ key: String) -> UInt32 {
+        let c = Array(key.utf8)
+        return UInt32(c[0]) << 24 | UInt32(c[1]) << 16 | UInt32(c[2]) << 8 | UInt32(c[3])
+    }
+
+    private func fourCCString(_ code: UInt32) -> String {
+        let bytes: [UInt8] = [
+            UInt8((code >> 24) & 0xFF),
+            UInt8((code >> 16) & 0xFF),
+            UInt8((code >> 8) & 0xFF),
+            UInt8(code & 0xFF),
+        ]
+        return String(bytes: bytes, encoding: .ascii) ?? ""
     }
 }

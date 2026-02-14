@@ -35,6 +35,33 @@ struct ComputerCardView: View {
         return .green
     }
 
+    private func gpuUsageColor(_ usage: Double) -> Color {
+        if usage >= 90 { return .red }
+        if usage >= 70 { return .orange }
+        if usage >= 40 { return .yellow }
+        return .green
+    }
+
+    private func gpuTempColor(_ temp: Double) -> Color {
+        guard temp >= 0 else { return .gray }
+        if temp >= 90 { return .red }
+        if temp >= 75 { return .orange }
+        if temp >= 55 { return .yellow }
+        return .green
+    }
+
+    /// Abbreviate GPU name for the ring subtitle (e.g. "AMD Radeon RX 580" → "RX 580").
+    private func gpuShortName(_ name: String) -> String {
+        if let range = name.range(of: "RX ", options: .caseInsensitive) {
+            return String(name[range.lowerBound...]).trimmingCharacters(in: .whitespaces)
+        }
+        if let range = name.range(of: "Pro ", options: .caseInsensitive) {
+            return String(name[range.lowerBound...]).trimmingCharacters(in: .whitespaces)
+        }
+        // Last resort: take last word
+        return name.components(separatedBy: " ").suffix(2).joined(separator: " ")
+    }
+
     var body: some View {
         VStack(spacing: 4) {
             // Machine name — tap to screen share
@@ -98,6 +125,26 @@ struct ComputerCardView: View {
             }
             .frame(height: 50)
 
+            // GPU dual rings (only if enabled and data available)
+            if machine.shouldShowGPURings {
+                HStack(spacing: 8) {
+                    ForEach(Array(machine.gpus.prefix(3).enumerated()), id: \.offset) { _, gpu in
+                        DualConcentricRingView(
+                            outerValue: gpu.usagePercent,
+                            outerMaxValue: 100,
+                            outerColor: gpuUsageColor(gpu.usagePercent),
+                            innerValue: gpu.temperatureCelsius,
+                            innerMaxValue: 120,
+                            innerColor: gpuTempColor(gpu.temperatureCelsius),
+                            label: gpu.temperatureCelsius >= 0 ? "\(Int(gpu.temperatureCelsius))\u{00B0}" : "--",
+                            subtitle: gpuShortName(gpu.name),
+                            isOnline: machine.isOnline
+                        )
+                    }
+                }
+                .frame(height: 50)
+            }
+
             // Metric tiles in scrollable area
             ScrollView {
                 VStack(spacing: 4) {
@@ -153,7 +200,7 @@ struct ComputerCardView: View {
                     }
                 }
             }
-            .frame(height: 78)  // ~3 lines visible (26pt each)
+            .frame(height: machine.shouldShowGPURings ? 58 : 78)
             .scrollIndicators(.hidden)
 
             // Widget slots

@@ -39,7 +39,7 @@ struct FlipCardView: View {
                 axis: (x: 0, y: 1, z: 0)
             )
         }
-        .frame(height: 210)  // Fixed height for uniform tiles
+        .frame(height: machine.shouldShowGPURings ? 264 : 210)
         .onTapGesture {
             if !machine.isFlipped {
                 withAnimation(.spring(duration: 0.4)) {

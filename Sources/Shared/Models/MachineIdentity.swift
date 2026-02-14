@@ -15,6 +15,9 @@ public struct MachineIdentity: Codable, Identifiable, Sendable {
     /// Widget slots for displaying assigned app icons (optional for backward compatibility)
     public var widgetSlots: [WidgetSlot]?
 
+    /// Whether to display GPU rings on this machine's tile (manual toggle).
+    public var showGPUs: Bool?
+
     public init(hardwareUUID: String, hostname: String) {
         self.hardwareUUID = hardwareUUID
         self.lastKnownHostname = hostname

@@ -13,6 +13,7 @@ public struct MachineStatus: Codable, Sendable {
     public let networks: [NetworkInfo]
     public let fileVaultEnabled: Bool
     public let agentVersion: String?
+    public let gpus: [GPUStatus]?
 
     public init(
         hardwareUUID: String,
@@ -25,7 +26,8 @@ public struct MachineStatus: Codable, Sendable {
         chipType: String,
         networks: [NetworkInfo],
         fileVaultEnabled: Bool,
-        agentVersion: String? = nil
+        agentVersion: String? = nil,
+        gpus: [GPUStatus]? = nil
     ) {
         self.hardwareUUID = hardwareUUID
         self.hostname = hostname
@@ -38,13 +40,14 @@ public struct MachineStatus: Codable, Sendable {
         self.networks = networks
         self.fileVaultEnabled = fileVaultEnabled
         self.agentVersion = agentVersion
+        self.gpus = gpus
     }
 
     // Backward-compatible decoding: accepts either "networks" array or old "network" single object.
     private enum CodingKeys: String, CodingKey {
         case hardwareUUID, hostname, cpuTempCelsius, cpuUsagePercent,
              networkBytesPerSec, uptimeSeconds, osVersion, chipType,
-             networks, network, fileVaultEnabled, agentVersion
+             networks, network, fileVaultEnabled, agentVersion, gpus
     }
 
     public init(from decoder: Decoder) throws {
@@ -59,6 +62,7 @@ public struct MachineStatus: Codable, Sendable {
         chipType = try c.decode(String.self, forKey: .chipType)
         fileVaultEnabled = try c.decode(Bool.self, forKey: .fileVaultEnabled)
         agentVersion = try c.decodeIfPresent(String.self, forKey: .agentVersion)
+        gpus = try c.decodeIfPresent([GPUStatus].self, forKey: .gpus)
 
         // Try new "networks" array first, fall back to old "network" single object
         if let arr = try? c.decode([NetworkInfo].self, forKey: .networks) {
@@ -83,6 +87,19 @@ public struct MachineStatus: Codable, Sendable {
         try c.encode(networks, forKey: .networks)
         try c.encode(fileVaultEnabled, forKey: .fileVaultEnabled)
         try c.encodeIfPresent(agentVersion, forKey: .agentVersion)
+        try c.encodeIfPresent(gpus, forKey: .gpus)
+    }
+}
+
+public struct GPUStatus: Codable, Sendable, Equatable {
+    public let name: String
+    public let temperatureCelsius: Double
+    public let usagePercent: Double
+
+    public init(name: String, temperatureCelsius: Double, usagePercent: Double) {
+        self.name = name
+        self.temperatureCelsius = temperatureCelsius
+        self.usagePercent = usagePercent
     }
 }
 

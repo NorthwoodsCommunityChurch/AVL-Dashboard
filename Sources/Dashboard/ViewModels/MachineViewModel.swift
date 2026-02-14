@@ -17,6 +17,8 @@ final class MachineViewModel: Identifiable {
     var networks: [NetworkInfo] = []
     var fileVaultEnabled: Bool = false
     var agentVersion: String?
+    var gpus: [GPUStatus] = []
+    var showGPUs: Bool = false
     var isUpdating: Bool = false
     var updateError: String?
     var lastSeen: Date
@@ -31,6 +33,12 @@ final class MachineViewModel: Identifiable {
 
     var isManual: Bool { manualEndpoint != nil }
 
+    /// Whether this machine has reported GPU data at least once.
+    var hasGPUCapability: Bool { !gpus.isEmpty }
+
+    /// Whether the tile should render in GPU-expanded mode.
+    var shouldShowGPURings: Bool { showGPUs && !gpus.isEmpty }
+
     /// The first/primary network interface (Ethernet preferred; used for VNC and fallback endpoint).
     var primaryNetwork: NetworkInfo? { networks.first }
     var id: String { hardwareUUID }
@@ -44,6 +52,7 @@ final class MachineViewModel: Identifiable {
         self.manualEndpoint = identity.manualEndpoint
         self.lastKnownIP = identity.lastKnownIP
         self.widgetSlots = identity.widgetSlots ?? WidgetSlot.defaults
+        self.showGPUs = identity.showGPUs ?? false
     }
 
     init(from status: MachineStatus) {
@@ -65,6 +74,9 @@ final class MachineViewModel: Identifiable {
         networks = status.networks
         fileVaultEnabled = status.fileVaultEnabled
         agentVersion = status.agentVersion
+        if let gpuData = status.gpus {
+            gpus = gpuData
+        }
         isOnline = true
         consecutiveFailures = 0
         lastSeen = Date()
@@ -91,6 +103,7 @@ final class MachineViewModel: Identifiable {
         identity.manualEndpoint = manualEndpoint
         identity.lastKnownIP = lastKnownIP
         identity.widgetSlots = widgetSlots
+        identity.showGPUs = showGPUs
         return identity
     }
 }
