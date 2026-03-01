@@ -7,7 +7,7 @@ struct DashboardGridView: View {
     @State private var showingSettings = false
 
     private let columns = [
-        GridItem(.adaptive(minimum: 150), spacing: 8)
+        GridItem(.adaptive(minimum: 180), spacing: 8)
     ]
 
     var body: some View {

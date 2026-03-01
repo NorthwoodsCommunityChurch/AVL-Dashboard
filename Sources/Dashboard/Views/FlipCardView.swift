@@ -39,7 +39,7 @@ struct FlipCardView: View {
                 axis: (x: 0, y: 1, z: 0)
             )
         }
-        .frame(height: machine.shouldShowGPURings ? 264 : 210)
+        .frame(height: 264)
         .onTapGesture {
             if !machine.isFlipped {
                 withAnimation(.spring(duration: 0.4)) {

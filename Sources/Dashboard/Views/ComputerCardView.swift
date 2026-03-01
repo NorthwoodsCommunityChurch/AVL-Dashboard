@@ -179,7 +179,7 @@ struct ComputerCardView: View {
                                       : (network.interfaceType == "Wi-Fi" ? "wifi" : "cable.connector.horizontal"))
                                     .font(.system(size: 9))
                                     .foregroundStyle(copiedNetwork == network.interfaceName ? Color.green : Color.secondary)
-                                Text("\(network.ipAddress) (\(network.interfaceType))")
+                                Text(network.ipAddress)
                                     .lineLimit(1)
                                 Spacer(minLength: 0)
                                 Text(network.macAddress)
@@ -200,7 +200,7 @@ struct ComputerCardView: View {
                     }
                 }
             }
-            .frame(height: machine.shouldShowGPURings ? 58 : 78)
+            .frame(maxHeight: .infinity)
             .scrollIndicators(.hidden)
 
             // Widget slots
