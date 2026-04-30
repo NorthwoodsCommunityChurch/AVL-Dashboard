@@ -120,13 +120,26 @@ echo "==> Building Windows Agent..."
 WINDOWS_EXE="$BUILD_DIR/DashboardAgent.exe"
 
 (
-    cd "$PROJECT_DIR/agent-windows"
+    cd "$PROJECT_DIR/agent-go"
     GOOS=windows GOARCH=amd64 go build \
         -ldflags="-H windowsgui -X main.version=$APP_VERSION" \
         -o "$WINDOWS_EXE" \
         .
 )
 echo "    DashboardAgent.exe created at $WINDOWS_EXE"
+
+# --- Build Linux Agent ---
+echo "==> Building Linux Agent..."
+LINUX_BIN="$BUILD_DIR/dashboard-agent"
+
+(
+    cd "$PROJECT_DIR/agent-go"
+    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+        -ldflags="-X main.version=$APP_VERSION" \
+        -o "$LINUX_BIN" \
+        .
+)
+echo "    dashboard-agent created at $LINUX_BIN"
 
 # --- Create release archives ---
 echo "==> Creating release archives..."
@@ -136,12 +149,14 @@ echo "==> Creating release archives..."
 (cd "$BUILD_DIR" && ditto -c -k --keepParent Dashboard.app "Dashboard-v${APP_VERSION}-universal.zip")
 (cd "$BUILD_DIR" && ditto -c -k --keepParent DashboardAgent.app "DashboardAgent-v${APP_VERSION}-universal.zip")
 (cd "$BUILD_DIR" && zip -j "DashboardAgent-v${APP_VERSION}-windows-amd64.zip" DashboardAgent.exe)
+(cd "$BUILD_DIR" && zip -j "DashboardAgent-v${APP_VERSION}-linux-amd64.zip" dashboard-agent)
 
 echo ""
 echo "==> Build complete!"
 echo "    Dashboard:       $DASH_APP"
 echo "    macOS Agent:     $AGENT_APP"
 echo "    Windows Agent:   $WINDOWS_EXE"
+echo "    Linux Agent:     $LINUX_BIN"
 echo ""
 echo "    Release archives in $BUILD_DIR/"
 echo ""

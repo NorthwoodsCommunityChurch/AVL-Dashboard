@@ -17,6 +17,12 @@ public struct MachineIdentity: Codable, Identifiable, Sendable {
 
     /// Whether to display GPU rings on this machine's tile (manual toggle).
     public var showGPUs: Bool?
+    /// Whether to display RAM usage ring.
+    public var showRAM: Bool?
+    /// Whether to display disk speed ring.
+    public var showDiskSpeed: Bool?
+    /// Network ring scale in Gbps (1, 10, or 20).
+    public var networkScaleGbps: Int?
 
     public init(hardwareUUID: String, hostname: String) {
         self.hardwareUUID = hardwareUUID

@@ -59,8 +59,10 @@ func (s *Server) handleStatus(conn net.Conn) {
 }
 
 func (s *Server) handleUpdate(conn net.Conn) {
-	// Accept the request; autonomous self-update handles actual updates.
-	writeResponse(conn, 200, "text/plain", []byte("Update accepted"))
+	writeResponse(conn, 200, "text/plain", []byte("Update check triggered"))
+	if s.updater != nil {
+		go s.updater.ForceCheck()
+	}
 }
 
 func writeResponse(conn net.Conn, status int, contentType string, body []byte) {

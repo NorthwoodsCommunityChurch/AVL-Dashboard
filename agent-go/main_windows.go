@@ -1,3 +1,5 @@
+//go:build windows
+
 package main
 
 import (
@@ -9,10 +11,10 @@ import (
 
 	"fyne.io/systray"
 
-	"github.com/NorthwoodsCommunityChurch/AVL-Dashboard/agent-windows/mdns"
-	"github.com/NorthwoodsCommunityChurch/AVL-Dashboard/agent-windows/metrics"
-	"github.com/NorthwoodsCommunityChurch/AVL-Dashboard/agent-windows/server"
-	"github.com/NorthwoodsCommunityChurch/AVL-Dashboard/agent-windows/update"
+	"github.com/NorthwoodsCommunityChurch/AVL-Dashboard/agent-go/mdns"
+	"github.com/NorthwoodsCommunityChurch/AVL-Dashboard/agent-go/metrics"
+	"github.com/NorthwoodsCommunityChurch/AVL-Dashboard/agent-go/server"
+	"github.com/NorthwoodsCommunityChurch/AVL-Dashboard/agent-go/update"
 )
 
 // version is injected at build time via -ldflags "-X main.version=..."
@@ -55,7 +57,9 @@ func onReady() {
 	collector := metrics.NewCollector(version)
 	go collector.Start()
 
-	srv := server.New(collector)
+	updater := update.NewUpdater(version)
+
+	srv := server.New(collector, updater)
 	go srv.ListenAndServe()
 
 	// Wait for server to bind, then update menu and start mDNS
@@ -66,8 +70,6 @@ func onReady() {
 
 		go mdns.Advertise(hostname, port)
 	}()
-
-	updater := update.NewUpdater(version)
 	go updater.StartPeriodicChecks()
 
 	// Track dashboard connection status in the menu

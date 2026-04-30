@@ -18,7 +18,13 @@ final class MachineViewModel: Identifiable {
     var fileVaultEnabled: Bool = false
     var agentVersion: String?
     var gpus: [GPUStatus] = []
+    var ramUsagePercent: Double = -1
+    var ramTotalGB: Double = 0
+    var diskBytesPerSec: Double = 0
     var showGPUs: Bool = false
+    var showRAM: Bool = false
+    var showDiskSpeed: Bool = false
+    var networkScaleGbps: Int = 1
     var isUpdating: Bool = false
     var updateError: String?
     var lastSeen: Date
@@ -39,6 +45,17 @@ final class MachineViewModel: Identifiable {
     /// Whether the tile should render in GPU-expanded mode.
     var shouldShowGPURings: Bool { showGPUs && !gpus.isEmpty }
 
+    /// Whether the agent has reported RAM data.
+    var hasRAMCapability: Bool { ramUsagePercent >= 0 }
+    var shouldShowRAMRing: Bool { showRAM && hasRAMCapability }
+
+    /// Whether the agent has reported disk throughput data.
+    var hasDiskSpeedCapability: Bool { diskBytesPerSec >= 0 }
+    var shouldShowDiskSpeedRing: Bool { showDiskSpeed && hasDiskSpeedCapability }
+
+    /// Network ring max value in bytes/sec based on the selected Gbps scale.
+    var networkMaxBytes: Double { Double(networkScaleGbps) * 125_000_000 }
+
     /// The first/primary network interface (Ethernet preferred; used for VNC and fallback endpoint).
     var primaryNetwork: NetworkInfo? { networks.first }
     var id: String { hardwareUUID }
@@ -53,6 +70,9 @@ final class MachineViewModel: Identifiable {
         self.lastKnownIP = identity.lastKnownIP
         self.widgetSlots = identity.widgetSlots ?? WidgetSlot.defaults
         self.showGPUs = identity.showGPUs ?? false
+        self.showRAM = identity.showRAM ?? false
+        self.showDiskSpeed = identity.showDiskSpeed ?? false
+        self.networkScaleGbps = identity.networkScaleGbps ?? 1
     }
 
     init(from status: MachineStatus) {
@@ -76,6 +96,15 @@ final class MachineViewModel: Identifiable {
         agentVersion = status.agentVersion
         if let gpuData = status.gpus {
             gpus = gpuData
+        }
+        if let ram = status.ramUsagePercent {
+            ramUsagePercent = ram
+        }
+        if let ramGB = status.ramTotalGB {
+            ramTotalGB = ramGB
+        }
+        if let diskSpeed = status.diskBytesPerSec {
+            diskBytesPerSec = diskSpeed
         }
         isOnline = true
         consecutiveFailures = 0
@@ -104,6 +133,9 @@ final class MachineViewModel: Identifiable {
         identity.lastKnownIP = lastKnownIP
         identity.widgetSlots = widgetSlots
         identity.showGPUs = showGPUs
+        identity.showRAM = showRAM
+        identity.showDiskSpeed = showDiskSpeed
+        identity.networkScaleGbps = networkScaleGbps
         return identity
     }
 }

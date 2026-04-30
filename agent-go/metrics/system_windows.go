@@ -1,3 +1,5 @@
+//go:build windows
+
 package metrics
 
 import (
@@ -22,7 +24,6 @@ type win32EncryptableVolume struct {
 }
 
 // readHardwareUUID gets the SMBIOS machine UUID via WMI.
-// This is persistent across OS reinstalls, equivalent to macOS IOPlatformUUID.
 func readHardwareUUID() string {
 	var products []win32ComputerSystemProduct
 	err := wmi.Query("SELECT UUID FROM Win32_ComputerSystemProduct", &products)
@@ -33,7 +34,7 @@ func readHardwareUUID() string {
 	return products[0].UUID
 }
 
-// readChipType gets the CPU name via WMI (e.g., "Intel(R) Core(TM) i7-12700K").
+// readChipType gets the CPU name via WMI.
 func readChipType() string {
 	var processors []win32Processor
 	err := wmi.Query("SELECT Name FROM Win32_Processor", &processors)
@@ -61,9 +62,8 @@ func readOSVersion() string {
 	return info.PlatformVersion
 }
 
-// checkBitLocker queries WMI for BitLocker protection on the C: drive.
-// Requires elevated privileges; returns false if unavailable.
-func checkBitLocker() bool {
+// checkDiskEncryption queries WMI for BitLocker protection on the C: drive.
+func checkDiskEncryption() bool {
 	var volumes []win32EncryptableVolume
 	err := wmi.QueryNamespace(
 		"SELECT ProtectionStatus FROM Win32_EncryptableVolume WHERE DriveLetter='C:'",
@@ -73,6 +73,5 @@ func checkBitLocker() bool {
 	if err != nil || len(volumes) == 0 {
 		return false
 	}
-	// ProtectionStatus: 0=Off, 1=On, 2=Unknown
 	return volumes[0].ProtectionStatus == 1
 }

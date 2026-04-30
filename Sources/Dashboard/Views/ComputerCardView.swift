@@ -35,6 +35,22 @@ struct ComputerCardView: View {
         return .green
     }
 
+    private var ramColor: Color {
+        let r = machine.ramUsagePercent
+        if r >= 90 { return .red }
+        if r >= 75 { return .orange }
+        if r >= 50 { return .yellow }
+        return .green
+    }
+
+    private var diskColor: Color {
+        let bps = machine.diskBytesPerSec
+        if bps >= 500_000_000 { return .blue }       // 500+ MB/s
+        if bps >= 100_000_000 { return .cyan }        // 100+ MB/s
+        if bps >= 10_000_000 { return .teal }          // 10+ MB/s
+        return .mint
+    }
+
     private func gpuUsageColor(_ usage: Double) -> Color {
         if usage >= 90 { return .red }
         if usage >= 70 { return .orange }
@@ -115,8 +131,8 @@ struct ComputerCardView: View {
                 )
 
                 MetricRingView(
-                    value: min(machine.networkBytesPerSec, 100_000_000),
-                    maxValue: 100_000_000,
+                    value: min(machine.networkBytesPerSec, machine.networkMaxBytes),
+                    maxValue: machine.networkMaxBytes,
                     color: netColor,
                     label: machine.networkBytesPerSec.formattedBytesPerSec,
                     icon: "arrow.up.arrow.down",
@@ -141,6 +157,39 @@ struct ComputerCardView: View {
                             isOnline: machine.isOnline
                         )
                     }
+                }
+                .frame(height: 50)
+            }
+
+            // RAM ring (only if enabled and data available)
+            if machine.shouldShowRAMRing {
+                HStack(spacing: 8) {
+                    MetricRingView(
+                        value: machine.ramUsagePercent,
+                        maxValue: 100,
+                        color: ramColor,
+                        label: "\(Int(machine.ramUsagePercent))%",
+                        icon: "memorychip",
+                        isOnline: machine.isOnline
+                    )
+                    Text("\(Int(machine.ramTotalGB)) GB")
+                        .font(.system(size: 9, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(height: 50)
+            }
+
+            // Disk speed ring (only if enabled and data available)
+            if machine.shouldShowDiskSpeedRing {
+                HStack(spacing: 8) {
+                    MetricRingView(
+                        value: min(machine.diskBytesPerSec, 2_000_000_000),
+                        maxValue: 2_000_000_000,
+                        color: diskColor,
+                        label: machine.diskBytesPerSec.formattedBytesPerSec,
+                        icon: "internaldrive",
+                        isOnline: machine.isOnline
+                    )
                 }
                 .frame(height: 50)
             }

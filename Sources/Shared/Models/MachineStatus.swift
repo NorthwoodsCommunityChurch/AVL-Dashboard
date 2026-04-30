@@ -14,6 +14,9 @@ public struct MachineStatus: Codable, Sendable {
     public let fileVaultEnabled: Bool
     public let agentVersion: String?
     public let gpus: [GPUStatus]?
+    public let ramUsagePercent: Double?
+    public let ramTotalGB: Double?
+    public let diskBytesPerSec: Double?
 
     public init(
         hardwareUUID: String,
@@ -27,7 +30,10 @@ public struct MachineStatus: Codable, Sendable {
         networks: [NetworkInfo],
         fileVaultEnabled: Bool,
         agentVersion: String? = nil,
-        gpus: [GPUStatus]? = nil
+        gpus: [GPUStatus]? = nil,
+        ramUsagePercent: Double? = nil,
+        ramTotalGB: Double? = nil,
+        diskBytesPerSec: Double? = nil
     ) {
         self.hardwareUUID = hardwareUUID
         self.hostname = hostname
@@ -41,13 +47,17 @@ public struct MachineStatus: Codable, Sendable {
         self.fileVaultEnabled = fileVaultEnabled
         self.agentVersion = agentVersion
         self.gpus = gpus
+        self.ramUsagePercent = ramUsagePercent
+        self.ramTotalGB = ramTotalGB
+        self.diskBytesPerSec = diskBytesPerSec
     }
 
     // Backward-compatible decoding: accepts either "networks" array or old "network" single object.
     private enum CodingKeys: String, CodingKey {
         case hardwareUUID, hostname, cpuTempCelsius, cpuUsagePercent,
              networkBytesPerSec, uptimeSeconds, osVersion, chipType,
-             networks, network, fileVaultEnabled, agentVersion, gpus
+             networks, network, fileVaultEnabled, agentVersion, gpus,
+             ramUsagePercent, ramTotalGB, diskBytesPerSec
     }
 
     public init(from decoder: Decoder) throws {
@@ -63,6 +73,9 @@ public struct MachineStatus: Codable, Sendable {
         fileVaultEnabled = try c.decode(Bool.self, forKey: .fileVaultEnabled)
         agentVersion = try c.decodeIfPresent(String.self, forKey: .agentVersion)
         gpus = try c.decodeIfPresent([GPUStatus].self, forKey: .gpus)
+        ramUsagePercent = try c.decodeIfPresent(Double.self, forKey: .ramUsagePercent)
+        ramTotalGB = try c.decodeIfPresent(Double.self, forKey: .ramTotalGB)
+        diskBytesPerSec = try c.decodeIfPresent(Double.self, forKey: .diskBytesPerSec)
 
         // Try new "networks" array first, fall back to old "network" single object
         if let arr = try? c.decode([NetworkInfo].self, forKey: .networks) {
@@ -88,6 +101,9 @@ public struct MachineStatus: Codable, Sendable {
         try c.encode(fileVaultEnabled, forKey: .fileVaultEnabled)
         try c.encodeIfPresent(agentVersion, forKey: .agentVersion)
         try c.encodeIfPresent(gpus, forKey: .gpus)
+        try c.encodeIfPresent(ramUsagePercent, forKey: .ramUsagePercent)
+        try c.encodeIfPresent(ramTotalGB, forKey: .ramTotalGB)
+        try c.encodeIfPresent(diskBytesPerSec, forKey: .diskBytesPerSec)
     }
 }
 

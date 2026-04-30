@@ -3,6 +3,7 @@ package metrics
 import (
 	"fmt"
 	"net"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -21,14 +22,33 @@ func NewNetworkTracker() *NetworkTracker {
 	return &NetworkTracker{}
 }
 
-// BytesPerSec returns combined in+out bytes/sec across all active interfaces.
+// isBondOrBridgeSlave returns true if the named interface is enslaved to a
+// bond or bridge. Such interfaces report the same traffic as their master, so
+// summing both double-counts. Linux-only check; other platforms always return
+// false (the /sys path won't exist).
+func isBondOrBridgeSlave(name string) bool {
+	_, err := os.Stat("/sys/class/net/" + name + "/master")
+	return err == nil
+}
+
+// BytesPerSec returns combined in+out bytes/sec across all active interfaces,
+// excluding slaves of bonds/bridges to avoid double-counting.
 func (t *NetworkTracker) BytesPerSec() float64 {
-	counters, err := psnet.IOCounters(false) // false = aggregate all interfaces
+	counters, err := psnet.IOCounters(true)
 	if err != nil || len(counters) == 0 {
 		return 0
 	}
 
-	totalBytes := counters[0].BytesSent + counters[0].BytesRecv
+	var totalBytes uint64
+	for _, c := range counters {
+		if c.Name == "lo" || strings.HasPrefix(c.Name, "lo:") {
+			continue
+		}
+		if isBondOrBridgeSlave(c.Name) {
+			continue
+		}
+		totalBytes += c.BytesSent + c.BytesRecv
+	}
 	now := time.Now()
 
 	defer func() {

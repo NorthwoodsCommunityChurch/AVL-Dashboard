@@ -8,6 +8,7 @@ final class SystemMetrics {
     private let cpuUsageTracker = CPUUsageTracker()
     private let networkTracker = NetworkTracker()
     private let gpuReader = GPUMetricsReader()
+    private let diskTracker = DiskIOTracker()
     private let cachedHardwareUUID: String
     private let cachedChipType: String
     private let cachedFileVault: Bool
@@ -24,6 +25,7 @@ final class SystemMetrics {
 
     func currentStatus() -> MachineStatus {
         let gpuStatuses = gpuReader.currentGPUStatuses()
+        let (ramPercent, ramTotal) = Self.readMemoryUsage()
         return MachineStatus(
             hardwareUUID: cachedHardwareUUID,
             hostname: ProcessInfo.processInfo.hostName,
@@ -36,7 +38,10 @@ final class SystemMetrics {
             networks: networkInterfaces(),
             fileVaultEnabled: cachedFileVault,
             agentVersion: AppVersion.current,
-            gpus: gpuStatuses.isEmpty ? nil : gpuStatuses
+            gpus: gpuStatuses.isEmpty ? nil : gpuStatuses,
+            ramUsagePercent: ramPercent,
+            ramTotalGB: ramTotal,
+            diskBytesPerSec: diskTracker.currentBytesPerSec()
         )
     }
 
@@ -221,6 +226,85 @@ final class SystemMetrics {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: data, encoding: .utf8) ?? ""
         return output.contains("FileVault is On")
+    }
+
+    // MARK: - Memory Usage
+
+    /// Returns (usagePercent, totalGB). Uses Mach VM statistics.
+    static func readMemoryUsage() -> (Double, Double) {
+        let totalBytes = Double(ProcessInfo.processInfo.physicalMemory)
+        let totalGB = totalBytes / (1024 * 1024 * 1024)
+
+        var stats = vm_statistics64_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &stats) { ptr in
+            ptr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPtr in
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, intPtr, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return (-1, totalGB) }
+
+        let pageSize = Double(vm_kernel_page_size)
+        let usedBytes = Double(stats.active_count + stats.wire_count) * pageSize
+        let usagePercent = (usedBytes / totalBytes) * 100
+
+        return (usagePercent, totalGB)
+    }
+}
+
+// MARK: - Disk I/O Tracker
+
+/// Tracks disk read+write bytes for delta-based throughput calculation via IOKit.
+final class DiskIOTracker {
+    private var prevBytes: UInt64 = 0
+    private var prevTime: Date?
+
+    /// Returns combined read+write bytes per second across all block devices.
+    func currentBytesPerSec() -> Double {
+        let totalBytes = readTotalDiskBytes()
+        let now = Date()
+
+        defer {
+            prevBytes = totalBytes
+            prevTime = now
+        }
+
+        guard let prev = prevTime, prevBytes > 0 else { return 0 }
+        let elapsed = now.timeIntervalSince(prev)
+        guard elapsed > 0 else { return 0 }
+
+        let delta = totalBytes > prevBytes ? totalBytes - prevBytes : 0
+        return Double(delta) / elapsed
+    }
+
+    private func readTotalDiskBytes() -> UInt64 {
+        let matching = IOServiceMatching("IOBlockStorageDriver") as NSMutableDictionary
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, matching, &iterator) == KERN_SUCCESS else {
+            return 0
+        }
+        defer { IOObjectRelease(iterator) }
+
+        var totalBytes: UInt64 = 0
+        var service = IOIteratorNext(iterator)
+        while service != 0 {
+            defer {
+                IOObjectRelease(service)
+                service = IOIteratorNext(iterator)
+            }
+
+            guard let props = IORegistryEntryCreateCFProperty(
+                service, "Statistics" as CFString, kCFAllocatorDefault, 0
+            )?.takeRetainedValue() as? [String: Any] else { continue }
+
+            if let read = props["Bytes (Read)"] as? UInt64 {
+                totalBytes += read
+            }
+            if let written = props["Bytes (Write)"] as? UInt64 {
+                totalBytes += written
+            }
+        }
+        return totalBytes
     }
 }
 
@@ -579,16 +663,20 @@ final class CPUUsageTracker {
             currentPerCPU[i] = (user, system, idle, nice)
 
             if let prev = previousPerCPU[i] {
-                let dUser = user - prev.user
-                let dSystem = system - prev.system
-                let dIdle = idle - prev.idle
-                let dNice = nice - prev.nice
-                let total = dUser + dSystem + dIdle + dNice
+                // Guard against counter resets (sleep/wake, core offline→online).
+                // UInt64 subtraction wraps to a huge value, which would otherwise
+                // make the busy/total ratio meaningless (often pegging at ~100%).
+                if user >= prev.user, system >= prev.system, idle >= prev.idle, nice >= prev.nice {
+                    let dUser = user - prev.user
+                    let dSystem = system - prev.system
+                    let dIdle = idle - prev.idle
+                    let dNice = nice - prev.nice
+                    let total = dUser + dSystem + dIdle + dNice
 
-                if total > 0 {
-                    totalBusy += Double(dUser + dSystem + dNice) / Double(total)
+                    if total > 0 {
+                        totalBusy += Double(dUser + dSystem + dNice) / Double(total)
+                    }
                 }
-                // Cores with zero delta (sleeping) contribute 0% to totalBusy
             }
             totalCounted += 1
         }

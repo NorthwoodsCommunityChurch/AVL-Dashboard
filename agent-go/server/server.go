@@ -8,7 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/NorthwoodsCommunityChurch/AVL-Dashboard/agent-windows/metrics"
+	"github.com/NorthwoodsCommunityChurch/AVL-Dashboard/agent-go/metrics"
+	"github.com/NorthwoodsCommunityChurch/AVL-Dashboard/agent-go/update"
 )
 
 const (
@@ -19,6 +20,7 @@ const (
 // Server is a lightweight HTTP server that exposes system metrics.
 type Server struct {
 	collector *metrics.Collector
+	updater   *update.Updater
 	listener  net.Listener
 	port      uint16
 	portReady chan struct{}
@@ -27,10 +29,11 @@ type Server struct {
 	mu           sync.RWMutex
 }
 
-// New creates a Server backed by the given metrics collector.
-func New(collector *metrics.Collector) *Server {
+// New creates a Server backed by the given metrics collector and updater.
+func New(collector *metrics.Collector, updater *update.Updater) *Server {
 	return &Server{
 		collector: collector,
+		updater:   updater,
 		portReady: make(chan struct{}),
 	}
 }

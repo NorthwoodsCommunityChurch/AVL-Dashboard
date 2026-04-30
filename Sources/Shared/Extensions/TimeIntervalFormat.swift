@@ -27,8 +27,10 @@ public extension Double {
             return "\(Int(self)) B/s"
         } else if self < 1024 * 1024 {
             return String(format: "%.0f KB/s", self / 1024)
-        } else {
+        } else if self < 1024 * 1024 * 1024 {
             return String(format: "%.1f MB/s", self / (1024 * 1024))
+        } else {
+            return String(format: "%.1f GB/s", self / (1024 * 1024 * 1024))
         }
     }
 }

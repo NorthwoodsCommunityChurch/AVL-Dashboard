@@ -1,16 +1,11 @@
 package update
 
 import (
-	"archive/zip"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -102,17 +97,8 @@ func (u *Updater) checkAndUpdate() {
 		return
 	}
 
-	// Find Windows agent asset
-	var targetAsset *GitHubAsset
-	for i, asset := range bestRelease.Assets {
-		lower := strings.ToLower(asset.Name)
-		if strings.Contains(lower, "windows") &&
-			strings.Contains(lower, "agent") &&
-			strings.HasSuffix(lower, ".zip") {
-			targetAsset = &bestRelease.Assets[i]
-			break
-		}
-	}
+	// Find platform-specific agent asset
+	targetAsset := findAgentAsset(bestRelease.Assets)
 	if targetAsset == nil {
 		return
 	}
@@ -167,80 +153,10 @@ func (u *Updater) downloadAsset(url string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// applyUpdate extracts the new exe from the zip, writes a batch trampoline
-// that replaces the running binary after exit, then terminates this process.
-func (u *Updater) applyUpdate(zipData []byte) error {
-	currentExe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	currentExe, err = filepath.EvalSymlinks(currentExe)
-	if err != nil {
-		return err
-	}
-
-	// Extract zip to temp directory
-	tempDir, err := os.MkdirTemp("", "avl-agent-update-*")
-	if err != nil {
-		return err
-	}
-
-	reader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
-	if err != nil {
-		return err
-	}
-
-	var newExePath string
-	for _, f := range reader.File {
-		if strings.HasSuffix(strings.ToLower(f.Name), ".exe") {
-			rc, err := f.Open()
-			if err != nil {
-				return err
-			}
-			newExePath = filepath.Join(tempDir, filepath.Base(f.Name))
-			out, err := os.Create(newExePath)
-			if err != nil {
-				rc.Close()
-				return err
-			}
-			io.Copy(out, rc)
-			out.Close()
-			rc.Close()
-			break
-		}
-	}
-
-	if newExePath == "" {
-		os.RemoveAll(tempDir)
-		return fmt.Errorf("no .exe found in update zip")
-	}
-
-	// Write batch trampoline that waits for this process to exit,
-	// replaces the exe, relaunches, and cleans up.
-	pid := os.Getpid()
-	batPath := filepath.Join(tempDir, "update.bat")
-	batContent := fmt.Sprintf(`@echo off
-:waitloop
-tasklist /FI "PID eq %d" 2>NUL | find /I "%d" >NUL
-if not errorlevel 1 (
-    timeout /t 1 /nobreak >NUL
-    goto waitloop
-)
-copy /Y "%s" "%s"
-start "" "%s"
-rmdir /S /Q "%s"
-`, pid, pid, newExePath, currentExe, currentExe, tempDir)
-
-	if err := os.WriteFile(batPath, []byte(batContent), 0755); err != nil {
-		return err
-	}
-
-	// Launch trampoline detached and exit
-	cmd := exec.Command("cmd.exe", "/C", "start", "/B", batPath)
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-
-	os.Exit(0)
-	return nil // unreachable
+// matchesAgentAsset checks if an asset name matches a platform keyword.
+func matchesAgentAsset(name, platform string) bool {
+	lower := strings.ToLower(name)
+	return strings.Contains(lower, platform) &&
+		strings.Contains(lower, "agent") &&
+		strings.HasSuffix(lower, ".zip")
 }

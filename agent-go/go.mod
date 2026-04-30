@@ -1,4 +1,4 @@
-module github.com/NorthwoodsCommunityChurch/AVL-Dashboard/agent-windows
+module github.com/NorthwoodsCommunityChurch/AVL-Dashboard/agent-go
 
 go 1.22
 

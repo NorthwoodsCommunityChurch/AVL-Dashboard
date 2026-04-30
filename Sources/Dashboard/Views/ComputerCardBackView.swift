@@ -84,6 +84,48 @@ struct ComputerCardBackView: View {
                 }
             }
 
+            // RAM toggle (only show if agent reports RAM data)
+            if machine.hasRAMCapability {
+                HStack(spacing: 4) {
+                    Image(systemName: "memorychip")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                    Toggle("Show RAM", isOn: $machine.showRAM)
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .font(.caption2)
+                }
+            }
+
+            // Disk speed toggle
+            if machine.hasDiskSpeedCapability {
+                HStack(spacing: 4) {
+                    Image(systemName: "internaldrive")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                    Toggle("Show Disk Speed", isOn: $machine.showDiskSpeed)
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .font(.caption2)
+                }
+            }
+
+            // Network scale picker
+            HStack(spacing: 4) {
+                Image(systemName: "network")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                Text("Net Scale")
+                    .font(.caption2)
+                Picker("", selection: $machine.networkScaleGbps) {
+                    Text("1G").tag(1)
+                    Text("10G").tag(10)
+                    Text("20G").tag(20)
+                }
+                .pickerStyle(.segmented)
+                .controlSize(.mini)
+            }
+
             Spacer(minLength: 0)
 
             // Action buttons

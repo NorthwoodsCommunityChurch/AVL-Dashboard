@@ -20,6 +20,9 @@ type MachineStatus struct {
 	Networks         []NetworkInfo `json:"networks"`
 	FileVaultEnabled bool          `json:"fileVaultEnabled"`
 	AgentVersion     string        `json:"agentVersion"`
+	RAMUsagePercent  float64       `json:"ramUsagePercent"`
+	RAMTotalGB       float64       `json:"ramTotalGB"`
+	DiskBytesPS      float64       `json:"diskBytesPerSec"`
 }
 
 // NetworkInfo describes a single network interface.
@@ -37,12 +40,13 @@ type Collector struct {
 	version string
 
 	// Cached at init (don't change during runtime)
-	hardwareUUID string
-	chipType     string
-	bitlocker    bool
+	hardwareUUID    string
+	chipType        string
+	diskEncrypted   bool
 
-	netTracker *NetworkTracker
-	cpuReader  *CPUReader
+	netTracker  *NetworkTracker
+	diskTracker *DiskTracker
+	cpuReader   *CPUReader
 }
 
 // NewCollector creates a new metrics collector with the given agent version string.
@@ -51,9 +55,10 @@ func NewCollector(version string) *Collector {
 		version:      version,
 		hardwareUUID: readHardwareUUID(),
 		chipType:     readChipType(),
-		bitlocker:    checkBitLocker(),
-		netTracker:   NewNetworkTracker(),
-		cpuReader:    NewCPUReader(),
+		diskEncrypted: checkDiskEncryption(),
+		netTracker:    NewNetworkTracker(),
+		diskTracker:   NewDiskTracker(),
+		cpuReader:     NewCPUReader(),
 	}
 	c.collect()
 	return c
@@ -77,6 +82,7 @@ func (c *Collector) CurrentStatus() MachineStatus {
 
 func (c *Collector) collect() {
 	hostname, _ := os.Hostname()
+	ramPercent, ramTotal := readMemory()
 
 	status := MachineStatus{
 		HardwareUUID:     c.hardwareUUID,
@@ -88,8 +94,11 @@ func (c *Collector) collect() {
 		OSVersion:        readOSVersion(),
 		ChipType:         c.chipType,
 		Networks:         readNetworkInterfaces(),
-		FileVaultEnabled: c.bitlocker,
+		FileVaultEnabled: c.diskEncrypted,
 		AgentVersion:     c.version,
+		RAMUsagePercent:  ramPercent,
+		RAMTotalGB:       ramTotal,
+		DiskBytesPS:      c.diskTracker.BytesPerSec(),
 	}
 
 	c.mu.Lock()
