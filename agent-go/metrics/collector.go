@@ -23,6 +23,7 @@ type MachineStatus struct {
 	RAMUsagePercent  float64       `json:"ramUsagePercent"`
 	RAMTotalGB       float64       `json:"ramTotalGB"`
 	DiskBytesPS      float64       `json:"diskBytesPerSec"`
+	GPUs             []GPUStatus   `json:"gpus,omitempty"`
 }
 
 // NetworkInfo describes a single network interface.
@@ -99,6 +100,7 @@ func (c *Collector) collect() {
 		RAMUsagePercent:  ramPercent,
 		RAMTotalGB:       ramTotal,
 		DiskBytesPS:      c.diskTracker.BytesPerSec(),
+		GPUs:             readGPUs(),
 	}
 
 	c.mu.Lock()

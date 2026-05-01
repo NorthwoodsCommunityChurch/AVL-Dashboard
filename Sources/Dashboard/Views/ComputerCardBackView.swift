@@ -71,44 +71,44 @@ struct ComputerCardBackView: View {
                     .lineLimit(2)
             }
 
-            // GPU toggle (only show if agent has reported GPU data)
-            if machine.hasGPUCapability {
-                HStack(spacing: 4) {
-                    Image(systemName: "square.3.layers.3d")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                    Toggle("Show GPUs", isOn: $machine.showGPUs)
-                        .toggleStyle(.switch)
-                        .controlSize(.mini)
-                        .font(.caption2)
-                }
+            HStack(spacing: 4) {
+                Image(systemName: "square.3.layers.3d")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                Toggle("Show GPUs", isOn: $machine.showGPUs)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .font(.caption2)
             }
+            .disabled(!machine.hasGPUCapability)
+            .opacity(machine.hasGPUCapability ? 1 : 0.35)
+            .help(machine.hasGPUCapability ? "" : "Agent does not report GPU data")
 
-            // RAM toggle (only show if agent reports RAM data)
-            if machine.hasRAMCapability {
-                HStack(spacing: 4) {
-                    Image(systemName: "memorychip")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                    Toggle("Show RAM", isOn: $machine.showRAM)
-                        .toggleStyle(.switch)
-                        .controlSize(.mini)
-                        .font(.caption2)
-                }
+            HStack(spacing: 4) {
+                Image(systemName: "memorychip")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                Toggle("Show RAM", isOn: $machine.showRAM)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .font(.caption2)
             }
+            .disabled(!machine.hasRAMCapability)
+            .opacity(machine.hasRAMCapability ? 1 : 0.35)
+            .help(machine.hasRAMCapability ? "" : "Agent does not report RAM data")
 
-            // Disk speed toggle
-            if machine.hasDiskSpeedCapability {
-                HStack(spacing: 4) {
-                    Image(systemName: "internaldrive")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                    Toggle("Show Disk Speed", isOn: $machine.showDiskSpeed)
-                        .toggleStyle(.switch)
-                        .controlSize(.mini)
-                        .font(.caption2)
-                }
+            HStack(spacing: 4) {
+                Image(systemName: "internaldrive")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                Toggle("Show Disk Speed", isOn: $machine.showDiskSpeed)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .font(.caption2)
             }
+            .disabled(!machine.hasDiskSpeedCapability)
+            .opacity(machine.hasDiskSpeedCapability ? 1 : 0.35)
+            .help(machine.hasDiskSpeedCapability ? "" : "Agent does not report disk-speed data")
 
             // Network scale picker
             HStack(spacing: 4) {
